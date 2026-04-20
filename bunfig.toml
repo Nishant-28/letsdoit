@@ -1,0 +1,5 @@
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+# Inline `process.env.*` literals into the client bundle (browser has no `process`).
+# "inline" is used instead of a prefix so CONVEX_URL from `.env.local` is always included.
+env = "inline"
