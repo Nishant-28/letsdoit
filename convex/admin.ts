@@ -175,3 +175,31 @@ export const adminStats = query({
     };
   },
 });
+
+export const listUsers = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id("users"),
+      email: v.string(),
+      name: v.string(),
+      role: v.string(),
+      intent: v.optional(v.string()),
+      onboardedAt: v.optional(v.number()),
+      createdAt: v.number(),
+    })
+  ),
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const users = await ctx.db.query("users").collect();
+    return users.map((u) => ({
+      _id: u._id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      intent: u.intent,
+      onboardedAt: u.onboardedAt,
+      createdAt: u.createdAt,
+    })).sort((a, b) => b.createdAt - a.createdAt);
+  },
+});

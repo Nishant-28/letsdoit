@@ -134,6 +134,8 @@ const result = await Bun.build({
     "process.env.CONVEX_URL": JSON.stringify(process.env.CONVEX_URL ?? ""),
     "process.env.VITE_WORKOS_CLIENT_ID": JSON.stringify(process.env.VITE_WORKOS_CLIENT_ID ?? ""),
     "process.env.VITE_WORKOS_REDIRECT_URI": JSON.stringify(process.env.VITE_WORKOS_REDIRECT_URI ?? ""),
+    "process.env.VITE_PUBLIC_POSTHOG_KEY": JSON.stringify(process.env.VITE_PUBLIC_POSTHOG_KEY ?? ""),
+    "process.env.VITE_PUBLIC_POSTHOG_HOST": JSON.stringify(process.env.VITE_PUBLIC_POSTHOG_HOST ?? ""),
   },
   ...cliConfig,
 });

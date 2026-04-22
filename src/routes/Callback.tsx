@@ -4,6 +4,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { AuthFrame } from "@/components/auth/AuthFrame";
 import { Icon } from "@/components/Icon";
+import { trackEvent } from "@/lib/posthog";
 
 type CallbackStep =
   | "auth" // waiting for Convex auth to confirm the WorkOS handoff
@@ -36,6 +37,7 @@ export function Callback() {
     syncUser()
       .then((user) => {
         setStep("route");
+        trackEvent("user_logged_in", { is_onboarded: user.onboarded });
         // Small delay so the "you're in" state is visible for a moment
         // instead of feeling like an abrupt flash.
         setTimeout(() => {

@@ -4,7 +4,7 @@ import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 
 function formatPrice(paise: number): string {
-  return `$${(paise / 100).toFixed(0)}`;
+  return `₹${(paise / 100).toFixed(0)}`;
 }
 
 export function Pricing() {
@@ -61,11 +61,11 @@ export function Pricing() {
         ))}
         {plans === undefined
           ? [0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="rounded-xl p-8 border border-outline-variant/20 h-80 animate-pulse"
-              />
-            ))
+            <div
+              key={i}
+              className="rounded-xl p-8 border border-outline-variant/20 h-80 animate-pulse"
+            />
+          ))
           : null}
       </div>
 

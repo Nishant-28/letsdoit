@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Icon } from "@/components/Icon";
+import { trackEvent } from "@/lib/posthog";
 import { cn } from "@/lib/utils";
 
 const levelLabel: Record<string, string> = {
@@ -28,13 +29,14 @@ export function JobDetail() {
 
   const viewedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!id) return;
+    if (!id || !job) return;
     if (viewedRef.current === id) return;
     viewedRef.current = id;
+    trackEvent("job_viewed", { job_id: id, title: job.title });
     recordView({ jobId: id as Id<"jobs"> }).catch(() => {
       viewedRef.current = null;
     });
-  }, [id, recordView]);
+  }, [id, job, recordView]);
 
   // Dynamic page title for SEO / sharing
   useEffect(() => {
@@ -83,6 +85,7 @@ export function JobDetail() {
     if (!id) return;
     try {
       await unlock({ jobId: id as Id<"jobs"> });
+      trackEvent("job_unlocked", { job_id: id, title: job?.title });
     } catch (e: any) {
       if (e?.message?.includes("Not authenticated")) {
         window.location.href = "/login";
@@ -92,6 +95,7 @@ export function JobDetail() {
 
   const onApply = () => {
     if (!job.applyUrl) return;
+    trackEvent("job_applied", { job_id: id, title: job.title });
     window.open(job.applyUrl, "_blank", "noopener,noreferrer");
   };
 

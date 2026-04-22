@@ -2,9 +2,10 @@ import { useCallback } from "react";
 import { Link } from "react-router";
 import { useMutation } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import type { api } from "../../convex/_generated/api";
+import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Icon } from "./Icon";
+import { trackEvent } from "@/lib/posthog";
 import { cn } from "@/lib/utils";
 
 type JobRow = FunctionReturnType<typeof api.jobs.listPublished>[number];
@@ -46,16 +47,18 @@ export function JobCard({
   const toggleSaved = useMutation(api.savedJobs.toggleSaved);
 
   const handleClick = useCallback(() => {
+    trackEvent("job_clicked", { job_id: job._id, title: job.title, unlocked: unlocked });
     recordClick({ jobId: job._id }).catch(() => {});
-  }, [job._id, recordClick]);
+  }, [job._id, job.title, unlocked, recordClick]);
 
   const handleSave = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      trackEvent(isSaved ? "job_unsaved" : "job_saved", { job_id: job._id, title: job.title });
       toggleSaved({ jobId: job._id }).catch(() => {});
     },
-    [job._id, toggleSaved],
+    [job._id, job.title, isSaved, toggleSaved],
   );
 
   return (
@@ -198,5 +201,3 @@ export function JobCard({
   );
 }
 
-// Need to import api for the mutations
-import { api } from "../../convex/_generated/api";

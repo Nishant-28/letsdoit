@@ -2,11 +2,13 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { convex } from "./lib/convex";
+import { usePageView, useIdentifyUser } from "./lib/posthog";
+import { useQuery } from "convex/react";
+import { api } from "../convex/_generated/api";
 import { Explore } from "./routes/Explore";
 import { JobDetail } from "./routes/JobDetail";
 import { Pricing } from "./routes/Pricing";
 import { SiteShell } from "./components/SiteShell";
-import { AppShell } from "./components/app/AppShell";
 import { RequireAuth } from "./components/auth/RequireAuth";
 import { RequireAdmin } from "./components/auth/RequireAdmin";
 import { Login } from "./routes/Login";
@@ -18,6 +20,10 @@ import { AppHome } from "./routes/AppHome";
 import { AdminDashboard } from "./routes/admin/AdminDashboard";
 import { AdminJobs } from "./routes/admin/AdminJobs";
 import { AdminJobForm } from "./routes/admin/AdminJobForm";
+import { AdminCompanies } from "./routes/admin/AdminCompanies";
+import { AdminCompanyForm } from "./routes/admin/AdminCompanyForm";
+import { AdminCategories } from "./routes/admin/AdminCategories";
+import { AdminUsers } from "./routes/admin/AdminUsers";
 
 const WORKOS_CLIENT_ID = process.env.VITE_WORKOS_CLIENT_ID ?? "";
 const WORKOS_REDIRECT_URI = process.env.VITE_WORKOS_REDIRECT_URI ?? "";
@@ -28,6 +34,17 @@ if (!WORKOS_CLIENT_ID || !WORKOS_REDIRECT_URI) {
   );
 }
 
+function PageViewTracker() {
+  usePageView();
+  return null;
+}
+
+function UserTracker() {
+  const me = useQuery(api.users.me);
+  useIdentifyUser(me);
+  return null;
+}
+
 export function App() {
   return (
     <AuthKitProvider
@@ -36,6 +53,8 @@ export function App() {
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
         <BrowserRouter>
+          <PageViewTracker />
+          <UserTracker />
           <Routes>
             {/* Auth handoff pages - no chrome, they own the viewport. */}
             <Route path="/login" element={<Login />} />
@@ -53,18 +72,33 @@ export function App() {
               }
             />
 
-            {/* Signed-in product surfaces share one authenticated shell. */}
-            <Route
-              element={
-                <RequireAuth>
-                  <AppShell />
-                </RequireAuth>
-              }
-            >
-              <Route path="/app" element={<AppHome />} />
-              <Route path="/profile" element={<Profile />} />
+            {/* Everything else shares the unified SiteShell. */}
+            <Route element={<SiteShell />}>
+              <Route index element={<Explore />} />
+              <Route path="jobs/:id" element={<JobDetail />} />
+              <Route path="pricing" element={<Pricing />} />
+
+              {/* Authenticated routes */}
               <Route
-                path="/admin"
+                path="app"
+                element={
+                  <RequireAuth>
+                    <AppHome />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="profile"
+                element={
+                  <RequireAuth>
+                    <Profile />
+                  </RequireAuth>
+                }
+              />
+
+              {/* Admin routes */}
+              <Route
+                path="admin"
                 element={
                   <RequireAdmin>
                     <AdminDashboard />
@@ -72,7 +106,7 @@ export function App() {
                 }
               />
               <Route
-                path="/admin/jobs"
+                path="admin/jobs"
                 element={
                   <RequireAdmin>
                     <AdminJobs />
@@ -80,7 +114,7 @@ export function App() {
                 }
               />
               <Route
-                path="/admin/jobs/new"
+                path="admin/jobs/new"
                 element={
                   <RequireAdmin>
                     <AdminJobForm />
@@ -88,20 +122,53 @@ export function App() {
                 }
               />
               <Route
-                path="/admin/jobs/:id/edit"
+                path="admin/jobs/:id/edit"
                 element={
                   <RequireAdmin>
                     <AdminJobForm />
                   </RequireAdmin>
                 }
               />
-            </Route>
-
-            {/* Public marketing surfaces. */}
-            <Route element={<SiteShell />}>
-              <Route index element={<Explore />} />
-              <Route path="jobs/:id" element={<JobDetail />} />
-              <Route path="pricing" element={<Pricing />} />
+              <Route
+                path="admin/companies"
+                element={
+                  <RequireAdmin>
+                    <AdminCompanies />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="admin/companies/new"
+                element={
+                  <RequireAdmin>
+                    <AdminCompanyForm />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="admin/companies/:id/edit"
+                element={
+                  <RequireAdmin>
+                    <AdminCompanyForm />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="admin/categories"
+                element={
+                  <RequireAdmin>
+                    <AdminCategories />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="admin/users"
+                element={
+                  <RequireAdmin>
+                    <AdminUsers />
+                  </RequireAdmin>
+                }
+              />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

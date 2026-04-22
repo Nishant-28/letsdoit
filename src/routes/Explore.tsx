@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { JobCard } from "@/components/JobCard";
 import { Icon } from "@/components/Icon";
+import { trackEvent } from "@/lib/posthog";
 import { cn } from "@/lib/utils";
 
 function useDebounced<T>(value: T, ms = 250): T {
@@ -20,6 +21,12 @@ export function Explore() {
   const [activeCat, setActiveCat] = useState<string | undefined>(undefined);
   const [activeSub, setActiveSub] = useState<string | undefined>(undefined);
   const search = useDebounced(searchInput, 200);
+
+  useEffect(() => {
+    if (search !== "") {
+      trackEvent("search_performed", { query: search });
+    }
+  }, [search]);
 
   const categories = useQuery(api.categories.list, {});
   const subcategories = useQuery(api.subcategories.listAll, {});
@@ -48,7 +55,16 @@ export function Explore() {
 
   useEffect(() => {
     setActiveSub(undefined);
+    if (activeCat) {
+      trackEvent("category_filtered", { category: activeCat });
+    }
   }, [activeCat]);
+
+  useEffect(() => {
+    if (activeSub) {
+      trackEvent("category_filtered", { category: activeCat, subcategory: activeSub });
+    }
+  }, [activeSub, activeCat]);
 
   const onSeed = async () => {
     await seed({});

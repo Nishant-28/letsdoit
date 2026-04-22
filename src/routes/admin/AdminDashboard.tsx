@@ -268,12 +268,27 @@ export function AdminDashboard() {
                     hint="Create, edit, publish, and archive"
                   />
                 </Link>
-                <ActionRow
-                  icon="business"
-                  label="Companies"
-                  hint="Owned logos and profiles"
-                  disabled
-                />
+                <Link to="/admin/companies">
+                  <ActionRow
+                    icon="business"
+                    label="Companies"
+                    hint="Manage company profiles and logos"
+                  />
+                </Link>
+                <Link to="/admin/categories">
+                  <ActionRow
+                    icon="category"
+                    label="Categories"
+                    hint="Manage sectors and subcategories"
+                  />
+                </Link>
+                <Link to="/admin/users">
+                  <ActionRow
+                    icon="group"
+                    label="Users"
+                    hint="View all platform users"
+                  />
+                </Link>
                 <ActionRow
                   icon="insights"
                   label="Detailed analytics"

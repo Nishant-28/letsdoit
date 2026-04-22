@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Icon } from "@/components/Icon";
+import { trackEvent } from "@/lib/posthog";
 import { FullPageLoader } from "@/components/auth/FullPageLoader";
 import { DEFAULT_ADMIN_CODE } from "@/lib/admin";
 import { cn } from "@/lib/utils";
@@ -118,6 +119,7 @@ export function Onboarding() {
         requestAdmin: wantsAdmin ? true : undefined,
         adminSignupCode: wantsAdmin ? adminSignupCode.trim() : undefined,
       });
+      trackEvent("onboarding_completed", { intent: intent });
       navigate("/app", { replace: true });
     } catch (err) {
       const message =
