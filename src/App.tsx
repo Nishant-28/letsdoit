@@ -81,7 +81,7 @@ export function App() {
               <Route path="jobs/:id" element={<JobDetail />} />
               <Route path="pricing" element={<Pricing />} />
 
-              {/* Payment landing page — users hit this after Cashfree
+              {/* Payment landing page — users hit this after PayU
                   checkout. Public because the user may not have fully
                   resumed their session yet after redirect. */}
               <Route path="payment/return" element={<PaymentReturn />} />

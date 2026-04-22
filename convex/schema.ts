@@ -43,7 +43,7 @@ export const entitlementKind = v.union(
 
 export const entitlementSource = v.union(
   v.literal("mock"),
-  v.literal("cashfree"),
+  v.literal("payu"),
   v.literal("admin"),
 );
 
@@ -75,7 +75,7 @@ export const paymentOrderStatus = v.union(
   v.literal("refunded"),
 );
 
-export const paymentProvider = v.literal("cashfree");
+export const paymentProvider = v.literal("payu");
 
 export const applicationStatus = v.union(
   v.literal("saved"),
@@ -189,7 +189,8 @@ export default defineSchema({
 
   /**
    * Durable record of a payment attempt. Created before we hand off to
-   * Cashfree checkout; mutated idempotently by webhook events. The
+   * PayU hosted checkout; mutated idempotently by callback / verification
+   * events. The
    * entitlement is only granted after a verified `paid` transition, and
    * `entitlementId` is backfilled at that point for reconciliation.
    */
@@ -201,19 +202,35 @@ export default defineSchema({
     amountPaise: v.number(),
     currency: v.string(),
     provider: paymentProvider,
-    /** Our own opaque order id, also sent to Cashfree as `order_id`. */
+    /** Our own opaque order id, also sent to PayU as `txnid`. */
     providerOrderId: v.string(),
-    /** Cashfree's `payment_session_id`; powers hosted checkout redirect. */
-    paymentSessionId: v.optional(v.string()),
+    /** PayU's payment id (`mihpayid`) after a callback or reconciliation. */
+    providerPaymentId: v.optional(v.string()),
+    /** Latest provider-reported status such as `success`, `failure`, or `pending`. */
+    providerStatus: v.optional(v.string()),
+    /** Extra provider state such as `captured` or `usercancelled`. */
+    providerUnmappedStatus: v.optional(v.string()),
+    /** Exact outbound fields used to generate and later verify PayU hashes. */
+    payuKey: v.optional(v.string()),
+    payuAmount: v.optional(v.string()),
+    payuProductInfo: v.optional(v.string()),
+    payuFirstname: v.optional(v.string()),
+    payuEmail: v.optional(v.string()),
+    payuPhone: v.optional(v.string()),
+    payuUdf1: v.optional(v.string()),
+    payuUdf2: v.optional(v.string()),
+    payuUdf3: v.optional(v.string()),
+    payuUdf4: v.optional(v.string()),
+    payuUdf5: v.optional(v.string()),
     status: paymentOrderStatus,
     createdAt: v.number(),
     paidAt: v.optional(v.number()),
     failedAt: v.optional(v.number()),
     failureReason: v.optional(v.string()),
     entitlementId: v.optional(v.id("entitlements")),
-    /** Last webhook event type (e.g. PAYMENT_SUCCESS_WEBHOOK) for reconciliation. */
-    lastWebhookEventType: v.optional(v.string()),
-    lastWebhookAt: v.optional(v.number()),
+    /** Last provider event or verification source used for settlement. */
+    lastProviderEvent: v.optional(v.string()),
+    lastProviderAt: v.optional(v.number()),
     returnUrl: v.optional(v.string()),
   })
     .index("by_providerOrderId", ["providerOrderId"])

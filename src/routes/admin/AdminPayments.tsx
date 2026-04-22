@@ -94,7 +94,7 @@ export function AdminPayments() {
       const result = await reconcile({ providerOrderId: o.providerOrderId });
       setFlash({
         tone: "success",
-        text: `Cashfree reports ${result.status} · action: ${result.action.replace(/_/g, " ")}`,
+        text: `PayU reports ${result.status} · action: ${result.action.replace(/_/g, " ")}`,
         orderId: o.providerOrderId,
       });
     } catch (err) {
@@ -114,7 +114,7 @@ export function AdminPayments() {
       <PageHeader
         eyebrow="System"
         title="Payments"
-        description="All Cashfree orders, their fulfillment state, and a reconcile hook for webhook misses."
+        description="All PayU orders, their fulfillment state, and a reconcile hook for missed or ambiguous callbacks."
         actions={
           <Link
             to="/admin"
@@ -214,9 +214,14 @@ export function AdminPayments() {
                         <div className="truncate max-w-[14rem]" title={o.providerOrderId}>
                           {o.providerOrderId}
                         </div>
-                        {o.lastWebhookEventType ? (
+                        {o.providerPaymentId ? (
+                          <div className="mt-1 text-[10px] text-outline-variant font-body">
+                            mihpayid: {o.providerPaymentId}
+                          </div>
+                        ) : null}
+                        {o.lastProviderEvent ? (
                           <div className="mt-1 text-[10px] text-outline-variant font-body uppercase tracking-wider">
-                            last: {o.lastWebhookEventType}
+                            last: {o.lastProviderEvent}
                           </div>
                         ) : null}
                       </td>

@@ -7,13 +7,14 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/posthog";
 
 /**
- * Post-checkout landing page. Cashfree redirects here with
+ * Post-checkout landing page. The PayU callback flow redirects here with
  * `?orderId=<ldi_…>` after the hosted checkout flow completes (success,
  * failure, or user drop).
  *
- * Fulfillment itself happens in the Cashfree webhook → Convex. This
+ * Fulfillment itself happens in the PayU callback / reconcile path in
+ * Convex. This
  * page subscribes to the `paymentOrders` row by `providerOrderId` and
- * reactively updates as the webhook settles the order. Because Convex
+ * reactively updates as the provider settles the order. Because Convex
  * queries are live subscriptions, no polling is needed.
  */
 export function PaymentReturn() {
@@ -79,7 +80,7 @@ export function PaymentReturn() {
           Confirming your payment
         </h1>
         <p className="font-body text-sm text-on-surface-variant">
-          One moment — Cashfree is finalising the transaction.
+          One moment — PayU is finalising the transaction.
         </p>
       </CenteredPanel>
     );
@@ -193,7 +194,7 @@ export function PaymentReturn() {
       </h1>
       <p className="font-body text-sm text-on-surface-variant mb-4">
         Your bank is finalising the transaction. This page updates
-        automatically when Cashfree confirms the payment.
+        automatically when PayU confirms the payment.
       </p>
       <p className="font-label text-xs text-outline-variant">
         Order: {providerOrderId}

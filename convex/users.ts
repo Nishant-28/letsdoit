@@ -25,7 +25,7 @@ export const me = query({
 });
 
 /**
- * Internal lookup used by Node actions (e.g. Cashfree `createOrder`) to
+ * Internal lookup used by Node actions (e.g. PayU `createOrder`) to
  * resolve the calling user's DB row. Node actions must go through
  * `ctx.runQuery` to read the database, so this exposes the same
  * `maybeUser` helper behind an internal boundary.

@@ -4,7 +4,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Icon } from "@/components/Icon";
-import { startCashfreeCheckout } from "@/lib/cashfree";
+import { startPayuCheckout } from "@/lib/payu";
 import { trackEvent } from "@/lib/posthog";
 import { cn } from "@/lib/utils";
 
@@ -104,13 +104,13 @@ export function JobDetail() {
         job_id: id,
         title: job.title,
       });
-      const { paymentSessionId, cashfreeMode } = await createOrder({
+      const { paymentUrl, fields } = await createOrder({
         productType: "job_unlock",
         jobId: id as Id<"jobs">,
       });
-      await startCashfreeCheckout({
-        paymentSessionId,
-        mode: cashfreeMode,
+      startPayuCheckout({
+        paymentUrl,
+        fields,
       });
     } catch (e) {
       const message =

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Icon } from "@/components/Icon";
-import { startCashfreeCheckout } from "@/lib/cashfree";
+import { startPayuCheckout } from "@/lib/payu";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/posthog";
 
@@ -69,13 +69,13 @@ export function Pricing() {
     setPendingSlug(slug);
     try {
       trackEvent("subscription_checkout_started", { plan_slug: slug });
-      const { paymentSessionId, cashfreeMode } = await createOrder({
+      const { paymentUrl, fields } = await createOrder({
         productType: "subscription",
         planSlug: slug,
       });
-      await startCashfreeCheckout({
-        paymentSessionId,
-        mode: cashfreeMode,
+      startPayuCheckout({
+        paymentUrl,
+        fields,
       });
     } catch (err) {
       const message =
@@ -246,10 +246,10 @@ export function Pricing() {
             </div>
             <div>
               <h3 className="font-headline text-2xl text-primary mb-2">
-                Secure Cashfree checkout
+                Secure PayU checkout
               </h3>
               <p className="text-on-surface-variant mb-2">
-                All payments are processed through Cashfree. Your card, UPI,
+                All payments are processed through PayU. Your card, UPI,
                 and net banking details never touch our servers.
               </p>
               <p className="text-outline text-xs font-label">

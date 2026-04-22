@@ -88,7 +88,7 @@ export function Billing() {
         <PageHeader
           eyebrow="Account"
           title="Billing & orders"
-          description="Every Cashfree order you've started, with the live status and any access granted."
+          description="Every PayU order you've started, with the live status and any access granted."
           actions={
             <Link
               to="/pricing"
@@ -160,7 +160,7 @@ export function Billing() {
                 No orders yet
               </div>
               <p className="font-body text-sm text-on-surface-variant mb-4">
-                Your Cashfree orders will appear here after your first checkout.
+                Your PayU orders will appear here after your first checkout.
               </p>
               <Link
                 to="/pricing"

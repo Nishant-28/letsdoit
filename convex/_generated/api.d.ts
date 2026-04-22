@@ -21,6 +21,7 @@ import type * as jobs from "../jobs.js";
 import type * as migrate from "../migrate.js";
 import type * as paymentOrders from "../paymentOrders.js";
 import type * as payments from "../payments.js";
+import type * as payu from "../payu.js";
 import type * as savedJobs from "../savedJobs.js";
 import type * as subcategories from "../subcategories.js";
 import type * as users from "../users.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   migrate: typeof migrate;
   paymentOrders: typeof paymentOrders;
   payments: typeof payments;
+  payu: typeof payu;
   savedJobs: typeof savedJobs;
   subcategories: typeof subcategories;
   users: typeof users;

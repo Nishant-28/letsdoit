@@ -109,7 +109,7 @@ export const listMine = query({
 
 /**
  * Phase 1 mock: instantly grants per-role access. Phase 3 deletes this and
- * routes through `convex/payments.ts` + Cashfree webhook.
+ * routes through `convex/payments.ts` + PayU callback verification.
  */
 export const mockUnlockJob = mutation({
   args: { jobId: v.id("jobs") },
@@ -283,7 +283,7 @@ export const listPlans = query({
 });
 
 /**
- * Internal query used by the Cashfree Node action to look up a plan's
+ * Internal query used by the PayU order action to look up a plan's
  * price + duration in paise at order-creation time. The action computes
  * the payable amount from this value, never from client input.
  */
@@ -316,8 +316,8 @@ export const getPlanBySlug = internalQuery({
 });
 
 /**
- * Internal fulfillment mutation invoked by the Cashfree webhook after
- * signature verification. Idempotent: if the matching entitlement
+ * Internal fulfillment mutation invoked after a verified PayU callback
+ * or reconciliation step. Idempotent: if the matching entitlement
  * already exists for this order, return the existing id without
  * inserting a second row.
  *
@@ -359,7 +359,7 @@ export const fulfillOrderEntitlement = internalMutation({
         planSlug: order.planSlug,
         startsAt: now,
         expiresAt,
-        source: "cashfree",
+        source: "payu",
         status: "active",
       });
       return entId;
@@ -390,7 +390,7 @@ export const fulfillOrderEntitlement = internalMutation({
         kind: "role",
         jobId: order.jobId,
         startsAt: now,
-        source: "cashfree",
+        source: "payu",
         status: "active",
       });
       await ctx.db.insert("jobEvents", {

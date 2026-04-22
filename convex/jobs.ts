@@ -145,7 +145,7 @@ export const getById = query({
 });
 
 /**
- * Internal lookup for the Cashfree create-order action. Returns the
+ * Internal lookup for the PayU create-order action. Returns the
  * authoritative unlock price and publish status so the Node action
  * never trusts client-supplied price input.
  */

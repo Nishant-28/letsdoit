@@ -6,9 +6,22 @@ import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { planSlug } from "./schema";
+import {
+  buildAppPaymentReturnUrl,
+  buildPayuRequestHashString,
+  buildPayuVerifyHashString,
+  derivePayuOutcome,
+  extractPayuFailureReason,
+  formatPayuAmount,
+  getPayuCallbackUrl,
+  getPayuConfig,
+  normalizePayuPhone,
+  sanitizePayuField,
+  sha512Hex,
+} from "./payu";
 
 /**
- * Cashfree Payments — phase-1 integration.
+ * PayU Hosted Checkout integration.
  *
  * Supports two products:
  *   - Subscription (`productType: "subscription"`) — grants access to every
@@ -16,116 +29,132 @@ import { planSlug } from "./schema";
  *   - Single-job unlock (`productType: "job_unlock"`) — grants access to
  *     one job; remains valid until the job is archived.
  *
- * The Node action only creates Cashfree orders and our own
+ * The Node action only creates PayU request payloads and our own
  * `paymentOrders` ledger row. Entitlements are never granted here — the
- * only path that writes `entitlements` in the cashfree source is the
- * signed webhook in `convex/http.ts`. This keeps fulfillment honest: a
+ * only path that writes `entitlements` in the `payu` source is the
+ * verified callback / reconcile path in `convex/http.ts`. This keeps
+ * fulfillment honest: a
  * user can click "checkout" without payment, but cannot unlock content
- * without a verified Cashfree event.
+ * without a verified provider settlement.
  *
- * Env required (set with `npx convex env set`):
- *   CASHFREE_APP_ID        — Cashfree client id for the PG app
- *   CASHFREE_SECRET_KEY    — Cashfree client secret
- *   CASHFREE_ENV           — "sandbox" (default) or "production"
- *   CASHFREE_API_VERSION   — optional, defaults to "2023-08-01"
- *   CASHFREE_WEBHOOK_SECRET— signing key used for webhook HMAC verification
- *                            (usually the same as CASHFREE_SECRET_KEY)
- *   PUBLIC_APP_URL         — public base URL of the web app, used for
- *                            Cashfree's return_url
+ * Env required (set with `bunx convex env set`):
+ *   PAYU_KEY          — PayU merchant key
+ *   PAYU_SALT         — PayU merchant salt
+ *   PAYU_ENV          — "test" (default) or "production"
+ *   PUBLIC_APP_URL    — public base URL of the web app
+ *   CONVEX_SITE_URL   — public Convex HTTP site URL used for PayU callbacks
+ *   PAYU_CALLBACK_URL — optional override for the PayU callback endpoint
+ *   PAYU_VERIFY_URL   — optional override for the Verify Payment API endpoint
  */
 
-type CashfreeOrderResponse = {
-  order_id: string;
-  payment_session_id: string;
-  order_status?: string;
-  cf_order_id?: number | string;
+type PayuVerifyTransaction = {
+  mihpayid?: string;
+  status?: string;
+  unmappedstatus?: string;
+  error?: string;
+  error_Message?: string;
+  field9?: string;
+  bank_ref_num?: string;
+  bank_ref_no?: string;
+  amount?: string;
+  mode?: string;
   [k: string]: unknown;
 };
 
-type CashfreeErrorResponse = {
-  code?: string;
-  message?: string;
-  type?: string;
+type PayuVerifyResponse = {
+  status?: number;
+  msg?: string;
+  transaction_details?: Record<string, PayuVerifyTransaction | undefined>;
 };
 
-function getCashfreeConfig() {
-  const env = (process.env.CASHFREE_ENV ?? "sandbox").toLowerCase();
-  const appId = process.env.CASHFREE_APP_ID?.trim();
-  const secret = process.env.CASHFREE_SECRET_KEY?.trim();
-  const apiVersion = process.env.CASHFREE_API_VERSION?.trim() || "2023-08-01";
-  if (!appId || !secret) {
-    throw new Error(
-      "Cashfree credentials missing. Set CASHFREE_APP_ID and CASHFREE_SECRET_KEY via `npx convex env set`.",
-    );
-  }
-  const mode = env === "production" ? "production" : "sandbox";
-  const apiBase =
-    mode === "production"
-      ? "https://api.cashfree.com/pg"
-      : "https://sandbox.cashfree.com/pg";
-  return { mode, appId, secret, apiVersion, apiBase };
+const PAYU_FIELDS_VALIDATOR = v.object({
+  key: v.string(),
+  txnid: v.string(),
+  amount: v.string(),
+  productinfo: v.string(),
+  firstname: v.string(),
+  email: v.string(),
+  phone: v.string(),
+  surl: v.string(),
+  furl: v.string(),
+  curl: v.optional(v.string()),
+  hash: v.string(),
+  udf1: v.optional(v.string()),
+  udf2: v.optional(v.string()),
+  udf3: v.optional(v.string()),
+  udf4: v.optional(v.string()),
+  udf5: v.optional(v.string()),
+});
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function getPublicAppUrl(): string {
-  const raw = process.env.PUBLIC_APP_URL?.trim();
-  if (!raw) {
+async function verifyPayuPayment(providerOrderId: string) {
+  const config = getPayuConfig();
+  const command = "verify_payment";
+  const verifyHash = await sha512Hex(
+    buildPayuVerifyHashString(config.key, command, providerOrderId, config.salt),
+  );
+
+  const body = new URLSearchParams({
+    key: config.key,
+    command,
+    var1: providerOrderId,
+    hash: verifyHash,
+  });
+
+  const response = await fetch(config.verifyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    const text = await safeText(response);
     throw new Error(
-      "PUBLIC_APP_URL is not set. Set it with `npx convex env set PUBLIC_APP_URL https://your-app.example.com`.",
-    );
-  }
-  return raw.replace(/\/$/, "");
-}
-
-function getConvexSiteUrl(): string | null {
-  const raw = process.env.CONVEX_SITE_URL?.trim();
-  if (!raw) return null;
-  return raw.replace(/\/$/, "");
-}
-
-function getCashfreeNotifyUrl(): string {
-  const explicit = process.env.CASHFREE_NOTIFY_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-  const site = getConvexSiteUrl();
-  if (!site) {
-    throw new Error(
-      "CASHFREE_NOTIFY_URL is not set and CONVEX_SITE_URL is unavailable. Set CASHFREE_NOTIFY_URL to your Convex site URL plus `/cashfree/webhook`.",
-    );
-  }
-  return `${site.replace(/\/$/, "")}/cashfree/webhook`;
-}
-
-function getCashfreeReturnUrls(providerOrderId: string): {
-  appReturnUrl: string;
-  cashfreeReturnUrl: string;
-} {
-  const publicUrl = getPublicAppUrl();
-  const appReturnUrl = `${publicUrl}/payment/return?orderId=${encodeURIComponent(providerOrderId)}`;
-
-  if (publicUrl.startsWith("https://")) {
-    return { appReturnUrl, cashfreeReturnUrl: appReturnUrl };
-  }
-
-  const site = getConvexSiteUrl();
-  if (!site) {
-    throw new Error(
-      "Cashfree requires an HTTPS return URL. Set PUBLIC_APP_URL to an https URL or configure CONVEX_SITE_URL so Convex can redirect back to your local app.",
+      `PayU verify_payment failed (${response.status}): ${text.slice(0, 300)}`,
     );
   }
 
-  const wrapperUrl = new URL(`${site}/cashfree/return`);
-  wrapperUrl.searchParams.set("orderId", providerOrderId);
+  const text = await response.text();
+  let payload: PayuVerifyResponse;
+  try {
+    payload = JSON.parse(text) as PayuVerifyResponse;
+  } catch {
+    throw new Error("PayU verify_payment returned non-JSON data.");
+  }
+
+  const detail = payload.transaction_details?.[providerOrderId];
+  const providerPaymentId = asNonEmptyString(detail?.mihpayid);
+  const providerStatus = asNonEmptyString(detail?.status);
+  const providerUnmappedStatus = asNonEmptyString(detail?.unmappedstatus);
+
+  if (!detail || providerStatus?.toLowerCase() === "not found") {
+    return {
+      outcome: null,
+      providerPaymentId,
+      providerStatus,
+      providerUnmappedStatus,
+      failureReason: asNonEmptyString(payload.msg) ?? "Transaction not found in PayU.",
+    };
+  }
 
   return {
-    appReturnUrl,
-    cashfreeReturnUrl: wrapperUrl.toString(),
+    outcome: derivePayuOutcome(providerStatus, providerUnmappedStatus),
+    providerPaymentId,
+    providerStatus,
+    providerUnmappedStatus,
+    failureReason: extractPayuFailureReason(detail),
   };
 }
 
 /**
- * Create a Cashfree order and return the hosted-checkout URL for the
- * client to redirect into. Idempotent per product: a user with an
- * already-active subscription will not be allowed to stack another
- * concurrent subscription order (access is already granted).
+ * Create a PayU request payload and return the hosted-checkout form
+ * fields for the client to POST into PayU Hosted Checkout.
  */
 export const createOrder = action({
   args: {
@@ -138,8 +167,9 @@ export const createOrder = action({
   },
   returns: v.object({
     orderId: v.string(),
-    paymentSessionId: v.string(),
-    cashfreeMode: v.union(v.literal("sandbox"), v.literal("production")),
+    paymentUrl: v.string(),
+    method: v.literal("POST"),
+    fields: PAYU_FIELDS_VALIDATOR,
     amountPaise: v.number(),
     currency: v.string(),
   }),
@@ -153,17 +183,12 @@ export const createOrder = action({
 
     const user = await ctx.runQuery(internal.users.internalGetMe, {});
     if (!user) throw new Error("Sign in to purchase.");
-    if (!user.phoneE164) {
-      throw new Error(
-        "Add your phone number in Profile before checkout — Cashfree requires a contact phone.",
-      );
-    }
 
     let amountPaise = 0;
     let currency = "INR";
     let planSlugValue: "weekly" | "monthly" | "quarterly" | "yearly" | undefined;
     let jobIdValue: Id<"jobs"> | undefined;
-    let productLabel = "";
+    let productInfo = "";
 
     if (args.productType === "subscription") {
       const plan = await ctx.runQuery(internal.entitlements.getPlanBySlug, {
@@ -172,7 +197,7 @@ export const createOrder = action({
       if (!plan) throw new Error(`Unknown plan: ${args.planSlug}`);
       amountPaise = plan.pricePaise;
       planSlugValue = args.planSlug;
-      productLabel = plan.label;
+      productInfo = `subscription:${plan.slug}`;
     } else {
       const job = await ctx.runQuery(internal.jobs.internalGetForPurchase, {
         id: args.jobId!,
@@ -183,18 +208,17 @@ export const createOrder = action({
       }
       amountPaise = job.unlockPricePaise;
       jobIdValue = job._id;
-      productLabel = `Unlock: ${job.title}`;
+      productInfo = `job_unlock:${job._id}`;
     }
 
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       throw new Error("Invalid price for the selected product.");
     }
 
-    const config = getCashfreeConfig();
+    const config = getPayuConfig();
     const providerOrderId = `ldi_${randomUUID().replace(/-/g, "")}`;
-    const { appReturnUrl, cashfreeReturnUrl } =
-      getCashfreeReturnUrls(providerOrderId);
-    const notifyUrl = getCashfreeNotifyUrl();
+    const appReturnUrl = buildAppPaymentReturnUrl(providerOrderId);
+    const payuReturnUrl = getPayuCallbackUrl();
 
     const orderId = await ctx.runMutation(internal.paymentOrders.insertOrder, {
       userId: user._id,
@@ -207,75 +231,62 @@ export const createOrder = action({
       returnUrl: appReturnUrl,
     });
 
-    const phoneDigits = user.phoneE164.replace(/\D/g, "").slice(-10);
+    const phone = normalizePayuPhone(user.phoneE164);
+    if (!phone) {
+      await ctx.runMutation(internal.paymentOrders.markCreationFailed, {
+        orderId,
+        reason: "A valid phone number is required before checkout.",
+      });
+      throw new Error("Add a valid phone number in Profile before checkout.");
+    }
 
-    const body = {
-      order_id: providerOrderId,
-      order_amount: amountPaise / 100,
-      order_currency: currency,
-      order_note: productLabel,
-      customer_details: {
-        customer_id: user._id as unknown as string,
-        customer_name: user.name || "Customer",
-        customer_email: user.email,
-        customer_phone: phoneDigits,
-      },
-      order_meta: {
-        return_url: cashfreeReturnUrl,
-        notify_url: notifyUrl,
-      },
+    const fields = {
+      key: config.key,
+      txnid: providerOrderId,
+      amount: formatPayuAmount(amountPaise),
+      productinfo: sanitizePayuField(productInfo, "payment", 80),
+      firstname: sanitizePayuField(user.name?.split(/\s+/)[0], "Customer", 60),
+      email: sanitizePayuField(user.email, "customer@example.com", 100),
+      phone,
+      surl: payuReturnUrl,
+      furl: payuReturnUrl,
+      curl: payuReturnUrl,
+      udf1: String(orderId),
+      udf2: args.productType,
+      udf3:
+        args.productType === "subscription"
+          ? args.planSlug
+          : (args.jobId as string | undefined),
+      udf4: undefined,
+      udf5: undefined,
+      hash: "",
     };
 
-    let response: Response;
-    try {
-      response = await fetch(`${config.apiBase}/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "x-api-version": config.apiVersion,
-          "x-client-id": config.appId,
-          "x-client-secret": config.secret,
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await ctx.runMutation(internal.paymentOrders.markCreationFailed, {
-        orderId,
-        reason: `Network error: ${msg}`,
-      });
-      throw new Error("Could not reach Cashfree. Please try again.");
-    }
-
-    if (!response.ok) {
-      const text = await safeText(response);
-      await ctx.runMutation(internal.paymentOrders.markCreationFailed, {
-        orderId,
-        reason: `Cashfree ${response.status}: ${text.slice(0, 500)}`,
-      });
-      console.error(`Cashfree createOrder failed (${response.status}): ${text}`);
-      throw new Error(extractCashfreeError(response.status, text));
-    }
-
-    const data = (await response.json()) as CashfreeOrderResponse;
-    if (!data.payment_session_id) {
-      await ctx.runMutation(internal.paymentOrders.markCreationFailed, {
-        orderId,
-        reason: "Cashfree response missing payment_session_id",
-      });
-      throw new Error("Unexpected Cashfree response. Please try again.");
-    }
-
-    await ctx.runMutation(internal.paymentOrders.attachSession, {
+    await ctx.runMutation(internal.paymentOrders.attachPayuRequest, {
       orderId,
-      paymentSessionId: data.payment_session_id,
+      payuKey: fields.key,
+      payuAmount: fields.amount,
+      payuProductInfo: fields.productinfo,
+      payuFirstname: fields.firstname,
+      payuEmail: fields.email,
+      payuPhone: fields.phone,
+      payuUdf1: fields.udf1,
+      payuUdf2: fields.udf2,
+      payuUdf3: fields.udf3,
+      payuUdf4: fields.udf4,
+      payuUdf5: fields.udf5,
     });
+
+    const hash = await sha512Hex(buildPayuRequestHashString(fields, config.salt));
 
     return {
       orderId: providerOrderId,
-      paymentSessionId: data.payment_session_id,
-      cashfreeMode: config.mode,
+      paymentUrl: config.paymentUrl,
+      method: "POST" as const,
+      fields: {
+        ...fields,
+        hash,
+      },
       amountPaise,
       currency,
     };
@@ -290,25 +301,11 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
-function extractCashfreeError(status: number, raw: string): string {
-  try {
-    const parsed = JSON.parse(raw) as CashfreeErrorResponse;
-    if (parsed.message) {
-      return parsed.code
-        ? `${parsed.message} (${parsed.code})`
-        : parsed.message;
-    }
-  } catch {
-    // Non-JSON provider response; fall through to generic message.
-  }
-  return `Checkout could not be started (${status}). Please try again.`;
-}
-
 /**
  * Admin-only reconciliation action: pull the latest state for a local
- * order from Cashfree (useful if a webhook was missed). Updates the
- * local `paymentOrders` row and grants the entitlement if the server
- * reports the order as paid.
+ * order from PayU (useful if a callback was missed or ambiguous).
+ * Updates the local `paymentOrders` row and grants the entitlement if
+ * the server reports the order as paid.
  */
 export const adminReconcileOrder = action({
   args: { providerOrderId: v.string() },
@@ -329,49 +326,44 @@ export const adminReconcileOrder = action({
     );
     if (!order) throw new Error("Order not found.");
 
-    const config = getCashfreeConfig();
-    const res = await fetch(
-      `${config.apiBase}/orders/${encodeURIComponent(args.providerOrderId)}`,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          "x-api-version": config.apiVersion,
-          "x-client-id": config.appId,
-          "x-client-secret": config.secret,
-        },
-      },
-    );
-    if (!res.ok) {
-      const text = await safeText(res);
-      throw new Error(
-        `Cashfree reconcile failed (${res.status}): ${text.slice(0, 300)}`,
-      );
-    }
-
-    const data = (await res.json()) as { order_status?: string };
-    const providerStatus = (data.order_status ?? "").toUpperCase();
+    const verified = await verifyPayuPayment(args.providerOrderId);
 
     let actionTaken = "no_change";
-    if (providerStatus === "PAID") {
+    if (verified.outcome === "paid") {
       const result = await ctx.runMutation(internal.paymentOrders.fulfillPaid, {
         providerOrderId: args.providerOrderId,
-        eventType: "ADMIN_RECONCILE",
+        eventType: "VERIFY_PAYMENT_API",
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
       });
       actionTaken = result.alreadyPaid ? "already_paid" : "marked_paid";
-    } else if (providerStatus === "EXPIRED" || providerStatus === "CANCELLED") {
+    } else if (verified.outcome === "payment_pending") {
+      await ctx.runMutation(internal.paymentOrders.markPaymentPending, {
+        orderId: order._id,
+        eventType: "VERIFY_PAYMENT_API",
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
+        reason: verified.failureReason,
+      });
+      actionTaken = "marked_pending";
+    } else if (verified.outcome === "failed" || verified.outcome === "canceled") {
       await ctx.runMutation(internal.paymentOrders.markFailed, {
         orderId: order._id,
-        reason: `Cashfree status: ${providerStatus}`,
-        eventType: "ADMIN_RECONCILE",
-        status: providerStatus === "EXPIRED" ? "failed" : "canceled",
+        reason: verified.failureReason ?? "PayU reported a failed payment.",
+        eventType: "VERIFY_PAYMENT_API",
+        status: verified.outcome,
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
       });
-      actionTaken = "marked_" + (providerStatus === "EXPIRED" ? "failed" : "canceled");
+      actionTaken = `marked_${verified.outcome}`;
     }
 
     return {
       providerOrderId: args.providerOrderId,
-      status: providerStatus || "UNKNOWN",
+      status: verified.providerUnmappedStatus ?? verified.providerStatus ?? "UNKNOWN",
       action: actionTaken,
     };
   },

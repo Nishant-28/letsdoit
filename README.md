@@ -48,13 +48,14 @@ convex/
   jobs.ts             listPublished, getById, admin CRUD, seedSampleData
   entitlements.ts     myAccess, mockUnlockJob, mockSubscribe, listPlans
   applications.ts     mine, setStatus, recordApply, remove
-  payments.ts         PHASE 2 STUB — Cashfree action
-  http.ts             PHASE 2 STUB — Cashfree webhook
+  payments.ts         PayU Hosted Checkout action + reconcile
+  http.ts             PayU callback handler + redirect bridge
 
 src/
   App.tsx             ConvexProvider + AuthProvider + react-router
   lib/
     convex.ts         ConvexReactClient(process.env.CONVEX_URL)
+    payu.ts           hidden-form POST helper for PayU Hosted Checkout
     devUser.ts        localStorage-backed devId (phase 1 identity)
     auth.tsx          AuthProvider + useCurrentUser/useDevId
   components/
@@ -86,19 +87,37 @@ those fields over the wire — devtools can't peek.
 
 Entitlements come from `entitlements.mockUnlockJob` /
 `entitlements.mockSubscribe` for now. In phase 2 these are deleted
-and replaced by an action in `convex/payments.ts` plus a Cashfree
-webhook in `convex/http.ts`.
+and replaced by an action in `convex/payments.ts` plus a PayU callback
+verification flow in `convex/http.ts`.
 
-## Phase 2 — Cashfree
+## Payments — PayU Hosted Checkout
 
-Wiring points already in place:
+The app uses PayU Hosted Checkout for both subscriptions and one-off job
+unlocks:
 
-- `convex/payments.ts` — drop the action implementation here.
-- `convex/http.ts` — webhook receiver.
-- `src/components/UnlockSheet.tsx` — swap
-  `useMutation(api.entitlements.mockX)` for
-  `useAction(api.payments.createOrder)` + redirect.
-- `.env.local` — add `CASHFREE_APP_ID` and `CASHFREE_SECRET_KEY`.
+1. `api.payments.createOrder` creates a local `paymentOrders` row and
+   returns a server-generated PayU form payload plus SHA-512 hash.
+2. The frontend submits that payload to PayU using a hidden HTML form.
+3. PayU POSTs the customer back to `CONVEX_SITE_URL/payu/return`.
+4. `convex/http.ts` reverse-verifies the PayU hash, then settles the
+   order server-side and redirects the browser to
+   `/payment/return?orderId=<txnid>`.
+5. `src/routes/PaymentReturn.tsx` watches the order status reactively.
+
+Required Convex env vars:
+
+- `PAYU_KEY`
+- `PAYU_SALT`
+- `PAYU_ENV` (`test` or `production`)
+- `PUBLIC_APP_URL`
+- `CONVEX_SITE_URL`
+- `PAYU_CALLBACK_URL` (optional override)
+- `PAYU_VERIFY_URL` (optional override)
+
+Sandbox defaults:
+
+- checkout endpoint: `https://test.payu.in/_payment`
+- verify endpoint: `https://test.payu.in/merchant/postservice.php?form=2`
 
 ## Phase 2 — Real auth
 

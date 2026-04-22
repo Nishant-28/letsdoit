@@ -1,6 +1,17 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import {
+  buildAppPaymentReturnUrl,
+  buildPayuResponseHashString,
+  buildPayuVerifyHashString,
+  derivePayuOutcome,
+  extractPayuFailureReason,
+  getPayuAdditionalCharges,
+  getPayuConfig,
+  parsePayuFormPayload,
+  sha512Hex,
+} from "./payu";
 
 const http = httpRouter();
 
@@ -84,88 +95,37 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#039;");
 }
 
-// Import api for runQuery reference
-import { api } from "./_generated/api";
-
 http.route({
-  path: "/cashfree/return",
+  path: "/payu/return",
   method: "GET",
   handler: httpAction(async (_ctx, req) => {
     const url = new URL(req.url);
-    const orderId = url.searchParams.get("orderId")?.trim();
+    const orderId =
+      url.searchParams.get("orderId")?.trim() ||
+      url.searchParams.get("txnid")?.trim();
     if (!orderId) {
       return new Response("Missing orderId", { status: 400 });
     }
-
-    const publicUrl = process.env.PUBLIC_APP_URL?.trim()?.replace(/\/$/, "");
-    if (!publicUrl) {
-      return new Response("PUBLIC_APP_URL is not configured", { status: 500 });
-    }
-
-    const redirectUrl = new URL(`${publicUrl}/payment/return`);
-    redirectUrl.searchParams.set("orderId", orderId);
-
-    return Response.redirect(redirectUrl.toString(), 302);
+    return Response.redirect(buildAppPaymentReturnUrl(orderId), 302);
   }),
 });
 
 /**
- * Cashfree webhook endpoint. Cashfree POSTs payment lifecycle events
- * here — `PAYMENT_SUCCESS_WEBHOOK`, `PAYMENT_FAILED_WEBHOOK`,
- * `PAYMENT_USER_DROPPED_WEBHOOK`, and refund events.
- *
- * Security: every request carries `x-webhook-signature` and
- * `x-webhook-timestamp`. The signature is base64(HMAC-SHA256(timestamp +
- * rawBody)) using the client secret. Any request that does not verify
- * is silently rejected with 401.
- *
- * Idempotency: fulfillment mutations are safe to call multiple times
- * per `providerOrderId`. Cashfree retries failed webhooks for ~72h, so
- * we always return 200 after processing a verified event.
+ * PayU Hosted Checkout callback endpoint. PayU POSTs URL-encoded form
+ * fields here after the customer completes, fails, or cancels the
+ * hosted checkout flow. We verify the reverse hash, then settle the
+ * local order server-side before redirecting the browser back into the
+ * app.
  */
 http.route({
-  path: "/cashfree/webhook",
+  path: "/payu/return",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-webhook-signature");
-    const timestamp = req.headers.get("x-webhook-timestamp");
-
-    if (!signature || !timestamp) {
-      return new Response("Missing signature headers", { status: 401 });
-    }
-
-    const secret =
-      process.env.CASHFREE_WEBHOOK_SECRET?.trim() ||
-      process.env.CASHFREE_SECRET_KEY?.trim();
-    if (!secret) {
-      console.error(
-        "CASHFREE_WEBHOOK_SECRET / CASHFREE_SECRET_KEY is not configured.",
-      );
-      return new Response("Webhook misconfigured", { status: 500 });
-    }
-
-    const ok = await verifyCashfreeSignature({
-      secret,
-      timestamp,
-      rawBody,
-      receivedSignature: signature,
-    });
-    if (!ok) {
-      return new Response("Invalid signature", { status: 401 });
-    }
-
-    let payload: CashfreeWebhookPayload;
-    try {
-      payload = JSON.parse(rawBody) as CashfreeWebhookPayload;
-    } catch {
-      return new Response("Invalid JSON", { status: 400 });
-    }
-
-    const eventType = (payload.type || "").toUpperCase();
-    const providerOrderId = payload.data?.order?.order_id;
+    const payload = parsePayuFormPayload(rawBody);
+    const providerOrderId = payload.txnid?.trim();
     if (!providerOrderId) {
-      return new Response("Missing order_id", { status: 400 });
+      return new Response("Missing txnid", { status: 400 });
     }
 
     const order = await ctx.runQuery(
@@ -173,169 +133,210 @@ http.route({
       { providerOrderId },
     );
     if (!order) {
-      // Unknown order — still return 200 so Cashfree stops retrying an
-      // event we can't process. Log for investigation.
-      console.warn(
-        `Cashfree webhook: unknown order_id=${providerOrderId}, event=${eventType}`,
-      );
-      return new Response("ok", { status: 200 });
+      console.warn(`PayU callback: unknown txnid=${providerOrderId}`);
+      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
+    }
+
+    if (
+      !order.payuKey ||
+      !order.payuAmount ||
+      !order.payuProductInfo ||
+      !order.payuFirstname ||
+      !order.payuEmail
+    ) {
+      console.error(`PayU callback: order ${providerOrderId} is missing request snapshot fields.`);
+      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
+    }
+
+    const receivedHash = payload.hash?.trim().toLowerCase();
+    if (!receivedHash) {
+      return new Response("Missing hash", { status: 401 });
+    }
+
+    const config = getPayuConfig();
+    const expectedHash = await sha512Hex(
+      buildPayuResponseHashString(
+        {
+          key: order.payuKey,
+          txnid: order.providerOrderId,
+          amount: order.payuAmount,
+          productinfo: order.payuProductInfo,
+          firstname: order.payuFirstname,
+          email: order.payuEmail,
+          udf1: order.payuUdf1,
+          udf2: order.payuUdf2,
+          udf3: order.payuUdf3,
+          udf4: order.payuUdf4,
+          udf5: order.payuUdf5,
+          status: payload.status?.trim() ?? "",
+          splitInfo: payload.splitInfo?.trim() || undefined,
+          additionalCharges: getPayuAdditionalCharges(payload),
+        },
+        config.salt,
+      ),
+    );
+
+    if (expectedHash !== receivedHash) {
+      console.warn(`PayU callback: hash mismatch for ${providerOrderId}`);
+      return new Response("Invalid hash", { status: 401 });
+    }
+
+    const callbackOutcome = derivePayuOutcome(
+      payload.status,
+      payload.unmappedstatus,
+    );
+
+    let verified:
+      | {
+          outcome: "paid" | "payment_pending" | "failed" | "canceled" | null;
+          providerPaymentId?: string;
+          providerStatus?: string;
+          providerUnmappedStatus?: string;
+          failureReason?: string;
+        }
+      | null = null;
+
+    try {
+      verified = await verifyPayuPayment(providerOrderId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`PayU verify_payment failed for ${providerOrderId}: ${message}`);
+    }
+
+    const finalOutcome = verified
+      ? (verified.outcome ?? "payment_pending")
+      : callbackOutcome;
+    const providerPaymentId =
+      verified?.providerPaymentId ?? payload.mihpayid?.trim();
+    const providerStatus = verified?.providerStatus ?? payload.status?.trim();
+    const providerUnmappedStatus =
+      verified?.providerUnmappedStatus ?? payload.unmappedstatus?.trim();
+    const failureReason =
+      verified?.failureReason ?? extractPayuFailureReason(payload);
+
+    if (order.status === "paid" && finalOutcome !== "paid") {
+      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
     }
 
     try {
-      if (isSuccessEvent(eventType, payload)) {
+      if (finalOutcome === "paid") {
         await ctx.runMutation(internal.paymentOrders.fulfillPaid, {
           providerOrderId,
-          eventType,
+          eventType: "PAYU_CALLBACK",
+          providerPaymentId,
+          providerStatus,
+          providerUnmappedStatus,
         });
-      } else if (isFailureEvent(eventType, payload)) {
-        const reason =
-          payload.data?.payment?.payment_message ||
-          payload.data?.error_details?.error_description ||
-          `Cashfree ${eventType}`;
-        const derivedStatus =
-          eventType.includes("DROPPED") || eventType.includes("CANCEL")
-            ? ("canceled" as const)
-            : ("failed" as const);
-        await ctx.runMutation(internal.paymentOrders.markFailed, {
+      } else if (finalOutcome === "payment_pending") {
+        await ctx.runMutation(internal.paymentOrders.markPaymentPending, {
           orderId: order._id,
-          reason: String(reason).slice(0, 500),
-          eventType,
-          status: derivedStatus,
-        });
-      } else if (isRefundEvent(eventType, payload)) {
-        await ctx.runMutation(internal.paymentOrders.markRefunded, {
-          orderId: order._id,
-          eventType,
+          eventType: "PAYU_CALLBACK",
+          providerPaymentId,
+          providerStatus,
+          providerUnmappedStatus,
+          reason: failureReason,
         });
       } else {
-        // Unhandled event type — record it but don't fail the webhook.
-        console.info(
-          `Cashfree webhook: ignoring event ${eventType} for ${providerOrderId}`,
-        );
+        await ctx.runMutation(internal.paymentOrders.markFailed, {
+          orderId: order._id,
+          reason: failureReason,
+          eventType: "PAYU_CALLBACK",
+          status: finalOutcome,
+          providerPaymentId,
+          providerStatus,
+          providerUnmappedStatus,
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `Cashfree webhook fulfillment failed for ${providerOrderId}: ${msg}`,
-      );
+      console.error(`PayU settlement failed for ${providerOrderId}: ${msg}`);
       return new Response("fulfillment error", { status: 500 });
     }
 
-    return new Response("ok", { status: 200 });
+    return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
   }),
 });
 
-/**
- * Verify Cashfree's webhook signature using HMAC-SHA256 via Web Crypto.
- * The default Convex runtime exposes `crypto.subtle`, so we can do this
- * without needing `"use node"`.
- */
-async function verifyCashfreeSignature({
-  secret,
-  timestamp,
-  rawBody,
-  receivedSignature,
-}: {
-  secret: string;
-  timestamp: string;
-  rawBody: string;
-  receivedSignature: string;
-}): Promise<boolean> {
-  try {
-    const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      enc.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    const signed = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      enc.encode(timestamp + rawBody),
-    );
-    const computed = bytesToBase64(new Uint8Array(signed));
-    return timingSafeEqual(computed, receivedSignature);
-  } catch {
-    return false;
-  }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary);
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return mismatch === 0;
-}
-
-type CashfreeWebhookPayload = {
-  type?: string;
-  data?: {
-    order?: { order_id?: string; order_status?: string };
-    payment?: {
-      payment_status?: string;
-      payment_message?: string;
-      cf_payment_id?: string | number;
-    };
-    refund?: { refund_status?: string; cf_refund_id?: string | number };
-    error_details?: {
-      error_code?: string;
-      error_description?: string;
-    };
-  };
+type PayuVerifyTransaction = {
+  mihpayid?: string;
+  status?: string;
+  unmappedstatus?: string;
+  error?: string;
+  error_Message?: string;
+  field9?: string;
+  [k: string]: unknown;
 };
 
-function isSuccessEvent(
-  eventType: string,
-  payload: CashfreeWebhookPayload,
-): boolean {
-  if (eventType === "PAYMENT_SUCCESS_WEBHOOK") return true;
-  const status = payload.data?.payment?.payment_status?.toUpperCase?.();
-  if (
-    (eventType === "PAYMENT_STATUS_WEBHOOK" || eventType === "ORDER_PAID_WEBHOOK") &&
-    (status === "SUCCESS" || status === "PAID")
-  ) {
-    return true;
-  }
-  return false;
+type PayuVerifyResponse = {
+  status?: number;
+  msg?: string;
+  transaction_details?: Record<string, PayuVerifyTransaction | undefined>;
+};
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isFailureEvent(
-  eventType: string,
-  payload: CashfreeWebhookPayload,
-): boolean {
-  if (
-    eventType === "PAYMENT_FAILED_WEBHOOK" ||
-    eventType === "PAYMENT_USER_DROPPED_WEBHOOK"
-  ) {
-    return true;
-  }
-  const status = payload.data?.payment?.payment_status?.toUpperCase?.();
-  if (status === "FAILED" || status === "USER_DROPPED" || status === "CANCELLED") {
-    return true;
-  }
-  return false;
-}
-
-function isRefundEvent(
-  eventType: string,
-  _payload: CashfreeWebhookPayload,
-): boolean {
-  return (
-    eventType === "REFUND_STATUS_WEBHOOK" ||
-    eventType === "REFUND_SUCCESS_WEBHOOK"
+async function verifyPayuPayment(providerOrderId: string) {
+  const config = getPayuConfig();
+  const command = "verify_payment";
+  const verifyHash = await sha512Hex(
+    buildPayuVerifyHashString(config.key, command, providerOrderId, config.salt),
   );
+
+  const body = new URLSearchParams({
+    key: config.key,
+    command,
+    var1: providerOrderId,
+    hash: verifyHash,
+  });
+
+  const response = await fetch(config.verifyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `PayU verify_payment failed (${response.status}): ${text.slice(0, 300)}`,
+    );
+  }
+
+  const text = await response.text();
+  let payload: PayuVerifyResponse;
+  try {
+    payload = JSON.parse(text) as PayuVerifyResponse;
+  } catch {
+    throw new Error("PayU verify_payment returned non-JSON data.");
+  }
+
+  const detail = payload.transaction_details?.[providerOrderId];
+  const providerPaymentId = asNonEmptyString(detail?.mihpayid);
+  const providerStatus = asNonEmptyString(detail?.status);
+  const providerUnmappedStatus = asNonEmptyString(detail?.unmappedstatus);
+
+  if (!detail || providerStatus?.toLowerCase() === "not found") {
+    return {
+      outcome: null,
+      providerPaymentId,
+      providerStatus,
+      providerUnmappedStatus,
+      failureReason: asNonEmptyString(payload.msg) ?? "Transaction not found in PayU.",
+    };
+  }
+
+  return {
+    outcome: derivePayuOutcome(providerStatus, providerUnmappedStatus),
+    providerPaymentId,
+    providerStatus,
+    providerUnmappedStatus,
+    failureReason: extractPayuFailureReason(detail),
+  };
 }
 
 export default http;
