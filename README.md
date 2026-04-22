@@ -35,61 +35,6 @@ Open `http://localhost:3000`. On first load:
 3. To try the admin panel, open `/pricing` and tap the small
    **(Dev) Make me admin** link at the bottom, then go to `/admin`.
 
-## What's where
-
-```
-convex/
-  schema.ts           tables: users, categories, jobs, entitlements,
-                      applications, plans
-  helpers.ts          requireUser/requireAdmin/hasAccess + projectJob
-                      (the paywall masking lives here)
-  users.ts            getOrCreateDevUser, me, makeMeAdmin
-  categories.ts       list, adminUpsert
-  jobs.ts             listPublished, getById, admin CRUD, seedSampleData
-  entitlements.ts     myAccess, mockUnlockJob, mockSubscribe, listPlans
-  applications.ts     mine, setStatus, recordApply, remove
-  payments.ts         PayU Hosted Checkout action + reconcile
-  http.ts             PayU callback handler + redirect bridge
-
-src/
-  App.tsx             ConvexProvider + AuthProvider + react-router
-  lib/
-    convex.ts         ConvexReactClient(process.env.CONVEX_URL)
-    payu.ts           hidden-form POST helper for PayU Hosted Checkout
-    devUser.ts        localStorage-backed devId (phase 1 identity)
-    auth.tsx          AuthProvider + useCurrentUser/useDevId
-  components/
-    SiteShell.tsx     TopNav + Outlet + Footer
-    TopNav.tsx        sticky nav, role-gated Admin link
-    Footer.tsx
-    Icon.tsx          Material Symbols wrapper
-    JobCard.tsx       paywall-aware card (blurs hidden fields)
-    PaywallOverlay.tsx
-    UnlockSheet.tsx   modal: $9 unlock OR weekly/monthly/yearly sub
-  routes/
-    Explore.tsx       hero + categories filter + curated list
-    JobDetail.tsx     description + Apply or PaywallOverlay
-    Pricing.tsx       three plans + per-role explanation
-    Tracker.tsx       saved/applied/interviewing/offer/rejected board
-    admin/
-      AdminLayout.tsx role-gated shell
-      AdminJobs.tsx   table view
-      AdminJobForm.tsx create/edit form
-```
-
-## How the paywall works
-
-The masking is **server-side**. `convex/helpers.ts#projectJob` only
-emits `companyName`, `companyLogoUrl`, `location`, `applyUrl` and
-`descriptionMd` when the caller holds an entitlement for that exact
-job (or any active subscription). Locked rows literally don't ship
-those fields over the wire — devtools can't peek.
-
-Entitlements come from `entitlements.mockUnlockJob` /
-`entitlements.mockSubscribe` for now. In phase 2 these are deleted
-and replaced by an action in `convex/payments.ts` plus a PayU callback
-verification flow in `convex/http.ts`.
-
 ## Payments — PayU Hosted Checkout
 
 The app uses PayU Hosted Checkout for both subscriptions and one-off job
