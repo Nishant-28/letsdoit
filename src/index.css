@@ -5,3 +5,24 @@
     @apply min-h-screen antialiased m-0;
   }
 }
+
+@layer components {
+  .form-input {
+    @apply w-full bg-surface-container-lowest border border-outline-variant/25 text-on-surface font-body text-sm
+           px-4 py-2.5 rounded-lg outline-none transition-colors
+           placeholder:text-outline-variant/60
+           focus:border-primary/50 focus:ring-1 focus:ring-primary/20;
+  }
+  .form-input:is(select) {
+    @apply cursor-pointer appearance-none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23919191' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    padding-right: 2.5rem;
+  }
+  .form-input:is(textarea) {
+    @apply leading-relaxed;
+  }
+}
+

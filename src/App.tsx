@@ -1,97 +1,114 @@
-import { ConvexProviderWithAuth } from "convex/react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
+import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { convex } from "./lib/convex";
-import { AuthProvider } from "./lib/auth";
-import { useConvexAuthFromAuthKit } from "./lib/convexWithAuthKit";
 import { Explore } from "./routes/Explore";
 import { JobDetail } from "./routes/JobDetail";
 import { Pricing } from "./routes/Pricing";
-import { Tracker } from "./routes/Tracker";
-import { Account } from "./routes/Account";
+import { SiteShell } from "./components/SiteShell";
+import { AppShell } from "./components/app/AppShell";
+import { RequireAuth } from "./components/auth/RequireAuth";
+import { RequireAdmin } from "./components/auth/RequireAdmin";
 import { Login } from "./routes/Login";
 import { Signup } from "./routes/Signup";
-import { VerifyEmail } from "./routes/VerifyEmail";
-import { ForgotPassword } from "./routes/ForgotPassword";
-import { ResetPassword } from "./routes/ResetPassword";
-import { Onboard } from "./routes/Onboard";
-import { Logout } from "./routes/Logout";
+import { Callback } from "./routes/Callback";
+import { Onboarding } from "./routes/Onboarding";
+import { Profile } from "./routes/Profile";
+import { AppHome } from "./routes/AppHome";
+import { AdminDashboard } from "./routes/admin/AdminDashboard";
 import { AdminJobs } from "./routes/admin/AdminJobs";
 import { AdminJobForm } from "./routes/admin/AdminJobForm";
-import { AdminLayout } from "./routes/admin/AdminLayout";
-import { AdminCompanies } from "./routes/admin/AdminCompanies";
-import { AdminCompanyForm } from "./routes/admin/AdminCompanyForm";
-import { AdminCategories } from "./routes/admin/AdminCategories";
-import { AdminDashboard } from "./routes/admin/AdminDashboard";
-import { SiteShell } from "./components/SiteShell";
-import { RequireAuth } from "./components/RequireAuth";
+
+const WORKOS_CLIENT_ID = process.env.VITE_WORKOS_CLIENT_ID ?? "";
+const WORKOS_REDIRECT_URI = process.env.VITE_WORKOS_REDIRECT_URI ?? "";
+
+if (!WORKOS_CLIENT_ID || !WORKOS_REDIRECT_URI) {
+  throw new Error(
+    "Missing WorkOS environment variables. Check .env.local and restart.",
+  );
+}
 
 export function App() {
   return (
-    <ConvexProviderWithAuth client={convex} useAuth={useConvexAuthFromAuthKit}>
-      <AuthProvider>
+    <AuthKitProvider
+      clientId={WORKOS_CLIENT_ID}
+      redirectUri={WORKOS_REDIRECT_URI}
+    >
+      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
         <BrowserRouter>
           <Routes>
+            {/* Auth handoff pages - no chrome, they own the viewport. */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/callback" element={<Callback />} />
+
+            {/* First-run onboarding lives outside the dashboard shell
+                so it can feel like a dedicated setup experience. */}
+            <Route
+              path="/onboarding"
+              element={
+                <RequireAuth>
+                  <Onboarding />
+                </RequireAuth>
+              }
+            />
+
+            {/* Signed-in product surfaces share one authenticated shell. */}
+            <Route
+              element={
+                <RequireAuth>
+                  <AppShell />
+                </RequireAuth>
+              }
+            >
+              <Route path="/app" element={<AppHome />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route
+                path="/admin"
+                element={
+                  <RequireAdmin>
+                    <AdminDashboard />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/jobs"
+                element={
+                  <RequireAdmin>
+                    <AdminJobs />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/jobs/new"
+                element={
+                  <RequireAdmin>
+                    <AdminJobForm />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/jobs/:id/edit"
+                element={
+                  <RequireAdmin>
+                    <AdminJobForm />
+                  </RequireAdmin>
+                }
+              />
+            </Route>
+
+            {/* Public marketing surfaces. */}
             <Route element={<SiteShell />}>
               <Route index element={<Explore />} />
               <Route path="jobs/:id" element={<JobDetail />} />
               <Route path="pricing" element={<Pricing />} />
-              <Route
-                path="tracker"
-                element={
-                  <RequireAuth>
-                    <Tracker />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="account"
-                element={
-                  <RequireAuth>
-                    <Account />
-                  </RequireAuth>
-                }
-              />
-
-              {/* Public auth flows */}
-              <Route path="login" element={<Login />} />
-              <Route path="signup" element={<Signup />} />
-              <Route path="verify-email" element={<VerifyEmail />} />
-              <Route path="forgot-password" element={<ForgotPassword />} />
-              <Route path="reset-password" element={<ResetPassword />} />
-
-              {/* Authenticated one-time onboarding */}
-              <Route
-                path="onboard"
-                element={
-                  <RequireAuth skipOnboardCheck>
-                    <Onboard />
-                  </RequireAuth>
-                }
-              />
-              <Route path="logout" element={<Logout />} />
             </Route>
-            <Route
-              path="admin"
-              element={
-                <RequireAuth adminOnly>
-                  <AdminLayout />
-                </RequireAuth>
-              }
-            >
-              <Route index element={<AdminDashboard />} />
-              <Route path="jobs" element={<AdminJobs />} />
-              <Route path="jobs/new" element={<AdminJobForm />} />
-              <Route path="jobs/:id" element={<AdminJobForm />} />
-              <Route path="companies" element={<AdminCompanies />} />
-              <Route path="companies/new" element={<AdminCompanyForm />} />
-              <Route path="companies/:id" element={<AdminCompanyForm />} />
-              <Route path="categories" element={<AdminCategories />} />
-            </Route>
+
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
-      </AuthProvider>
-    </ConvexProviderWithAuth>
+      </ConvexProviderWithAuthKit>
+    </AuthKitProvider>
   );
 }
 

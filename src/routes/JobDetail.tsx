@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useEffect, useRef } from "react";
+import { Link, useParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { useAuth } from "@/lib/auth";
 import { Icon } from "@/components/Icon";
-import { PaywallOverlay } from "@/components/PaywallOverlay";
-import { UnlockSheet } from "@/components/UnlockSheet";
+import { cn } from "@/lib/utils";
 
 const levelLabel: Record<string, string> = {
   intern: "Intern",
@@ -20,17 +18,13 @@ const levelLabel: Record<string, string> = {
 
 export function JobDetail() {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   const job = useQuery(
     api.jobs.getById,
     id ? { id: id as Id<"jobs"> } : "skip",
   );
-  const recordApply = useMutation(api.applications.recordApply);
   const recordView = useMutation(api.jobEvents.recordView);
-  const setStatus = useMutation(api.applications.setStatus);
+  const unlock = useMutation(api.entitlements.mockUnlockJob);
 
   const viewedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -42,10 +36,22 @@ export function JobDetail() {
     });
   }, [id, recordView]);
 
+  // Dynamic page title for SEO / sharing
+  useEffect(() => {
+    if (job && job.title) {
+      document.title = `${job.title} — Let's Do It`;
+    } else {
+      document.title = "Let's Do It — Jobs for Freshers";
+    }
+    return () => {
+      document.title = "Let's Do It — Jobs for Freshers";
+    };
+  }, [job]);
+
   if (!id) return null;
   if (job === undefined) {
     return (
-      <div className="max-w-4xl mx-auto px-8 py-32">
+      <div className="max-w-4xl mx-auto px-4 sm:px-8 py-16 sm:py-32">
         <div className="h-8 w-1/2 bg-surface-container animate-pulse rounded mb-4" />
         <div className="h-4 w-1/3 bg-surface-container animate-pulse rounded mb-8" />
         <div className="h-64 bg-surface-container animate-pulse rounded" />
@@ -54,7 +60,7 @@ export function JobDetail() {
   }
   if (job === null) {
     return (
-      <div className="max-w-4xl mx-auto px-8 py-32 text-center">
+      <div className="max-w-4xl mx-auto px-4 sm:px-8 py-16 sm:py-32 text-center">
         <h1 className="font-headline text-3xl text-primary mb-2">
           Signal lost.
         </h1>
@@ -71,144 +77,214 @@ export function JobDetail() {
     );
   }
 
-  const onApply = async () => {
-    if (!job.unlocked || !job.applyUrl) return;
-    await recordApply({ jobId: job._id });
+  const unlocked = job.unlocked;
+
+  const onUnlock = async () => {
+    if (!id) return;
+    try {
+      await unlock({ jobId: id as Id<"jobs"> });
+    } catch (e: any) {
+      if (e?.message?.includes("Not authenticated")) {
+        window.location.href = "/login";
+      }
+    }
+  };
+
+  const onApply = () => {
+    if (!job.applyUrl) return;
     window.open(job.applyUrl, "_blank", "noopener,noreferrer");
   };
 
-  const onSave = async () => {
-    if (!user) {
-      navigate("/login", { state: { from: `/jobs/${id}` } });
-      return;
-    }
-    await setStatus({ jobId: job._id, status: "saved" });
-  };
-
-  const onUnlockClick = async () => {
-    if (!user) {
-      navigate("/login", { state: { from: `/jobs/${id}` } });
-      return;
-    }
-    setSheetOpen(true);
-  };
-
   return (
-    <div className="max-w-5xl mx-auto px-8 py-16">
+    <div className="max-w-5xl mx-auto px-4 sm:px-8 py-8 sm:py-16">
       <Link
         to="/"
-        className="inline-flex items-center gap-2 text-on-surface-variant hover:text-primary mb-8 font-label text-sm"
+        className="inline-flex items-center gap-2 text-on-surface-variant hover:text-primary mb-6 sm:mb-8 font-label text-sm"
       >
         <Icon name="arrow_back" className="text-base" /> Back to Explore
       </Link>
 
-      <header className="flex flex-col md:flex-row md:items-start gap-6 mb-12 pb-8 border-b border-outline-variant/15">
-        <div className="bg-surface p-4 rounded-lg shadow-sm border border-outline-variant/20">
-          {job.unlocked && job.companyLogoUrl ? (
-            <img
-              src={job.companyLogoUrl}
-              alt={`${job.companyName ?? ""} logo`}
-              className="w-16 h-16 rounded-md object-cover grayscale opacity-80"
-            />
-          ) : (
-            <div className="w-16 h-16 rounded-md bg-surface-container-high flex items-center justify-center">
-              <Icon name="lock" className="text-on-surface-variant text-2xl" />
+      {/* Header ---------------------------------------------------- */}
+      <header className="flex flex-col gap-4 sm:gap-6 mb-8 sm:mb-12 pb-6 sm:pb-8 border-b border-outline-variant/15">
+        <div className="flex items-start gap-4 sm:gap-6">
+          <div className="bg-surface p-3 sm:p-4 rounded-lg shadow-sm border border-outline-variant/20 shrink-0">
+            {unlocked && job.companyLogoUrl ? (
+              <img
+                src={job.companyLogoUrl}
+                alt={`${job.companyName ?? ""} logo`}
+                className="w-12 h-12 sm:w-16 sm:h-16 rounded-md object-cover grayscale opacity-80"
+              />
+            ) : (
+              <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-md bg-surface-container-high flex items-center justify-center">
+                <Icon
+                  name="lock"
+                  className="text-on-surface-variant text-xl sm:text-2xl"
+                />
+              </div>
+            )}
+          </div>
+          <div className="flex-grow min-w-0">
+            <h1 className="font-headline text-2xl sm:text-4xl md:text-5xl font-bold text-primary mb-2 sm:mb-3 tracking-tighter">
+              {job.title}
+            </h1>
+            <div className="flex flex-wrap items-center gap-3 sm:gap-6 text-on-surface-variant text-xs sm:text-sm font-body">
+              <span className="flex items-center gap-1">
+                <Icon name="domain" className="text-[16px] sm:text-[18px]" />
+                {unlocked ? (
+                  job.companyName ?? "—"
+                ) : (
+                  <span className="text-outline-variant italic">
+                    Unlock to reveal
+                  </span>
+                )}
+              </span>
+              <span className="flex items-center gap-1">
+                <Icon
+                  name="location_on"
+                  className="text-[16px] sm:text-[18px]"
+                />
+                {unlocked ? (
+                  job.location ?? "—"
+                ) : (
+                  <span className="text-outline-variant italic">
+                    Unlock to reveal
+                  </span>
+                )}
+              </span>
+              <span className="flex items-center gap-1">
+                <Icon name="work" className="text-[16px] sm:text-[18px]" />
+                {levelLabel[job.level] ?? job.level}
+              </span>
+              <span className="flex items-center gap-1">
+                <Icon
+                  name="travel_explore"
+                  className="text-[16px] sm:text-[18px]"
+                />
+                {job.workMode}
+              </span>
             </div>
-          )}
-        </div>
-        <div className="flex-grow">
-          <h1 className="font-headline text-4xl md:text-5xl font-bold text-primary mb-3 tracking-tighter">
-            {job.title}
-          </h1>
-          <div className="flex flex-wrap items-center gap-6 text-on-surface-variant text-sm font-body">
-            <span className="flex items-center gap-1">
-              <Icon name="domain" className="text-[18px]" />
-              <span className={job.unlocked ? "" : "blur-sm select-none"}>
-                {job.unlocked ? job.companyName : "Hidden Company"}
-              </span>
-            </span>
-            <span className="flex items-center gap-1">
-              <Icon name="location_on" className="text-[18px]" />
-              <span className={job.unlocked ? "" : "blur-sm select-none"}>
-                {job.unlocked ? job.location : "Hidden Location"}
-              </span>
-            </span>
-            <span className="flex items-center gap-1">
-              <Icon name="work" className="text-[18px]" />
-              {levelLabel[job.level] ?? job.level}
-            </span>
-            <span className="flex items-center gap-1">
-              <Icon name="travel_explore" className="text-[18px]" />
-              {job.workMode}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2 mt-4">
-            {job.skills.map((s) => (
-              <span
-                key={s}
-                className="bg-surface-container-high text-on-surface font-label text-xs px-3 py-1 rounded-md border border-outline-variant/30"
-              >
-                {s}
-              </span>
-            ))}
           </div>
         </div>
-        <div className="flex flex-col gap-2 md:items-end">
-          {job.unlocked ? (
+
+        <div className="flex flex-wrap gap-2">
+          {job.skills.map((s) => (
+            <span
+              key={s}
+              className="bg-surface-container-high text-on-surface font-label text-xs px-3 py-1 rounded-md border border-outline-variant/30"
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+          {unlocked ? (
+            <button
+              type="button"
+              onClick={onApply}
+              className="w-full sm:w-auto bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2"
+            >
+              <Icon name="open_in_new" />
+              Apply Now
+            </button>
+          ) : (
             <>
               <button
                 type="button"
-                onClick={onApply}
-                className="bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center gap-2"
+                onClick={onUnlock}
+                className="w-full sm:w-auto bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2"
               >
-                <Icon name="open_in_new" />
-                Apply
+                <Icon name="lock_open" />
+                Unlock for ₹{(job.unlockPricePaise / 100).toFixed(0)}
               </button>
-              <button
-                type="button"
-                onClick={onSave}
-                className="bg-surface-container-high text-on-surface font-label px-6 py-3 rounded-md hover:bg-surface-container-highest transition-colors inline-flex items-center gap-2"
+              <Link
+                to="/pricing"
+                className="w-full sm:w-auto border border-outline-variant/30 text-on-surface font-headline font-medium px-6 py-3 rounded-md hover:bg-surface-container-low transition-colors inline-flex items-center justify-center gap-2"
               >
-                <Icon name="bookmark_add" />
-                Save to Tracker
-              </button>
+                <Icon name="diamond" />
+                Subscribe to see all
+              </Link>
             </>
-          ) : (
-            <button
-              type="button"
-              onClick={onUnlockClick}
-              className="bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center gap-2"
-            >
-              <Icon name="lock_open" />
-              {user ? "Unlock Role" : "Sign in to Unlock"}
-            </button>
           )}
         </div>
       </header>
 
-      {job.unlocked ? (
-        <article className="prose prose-invert max-w-none font-body">
-          <h2 className="font-headline text-2xl text-primary mb-4">
+      {/* Description ------------------------------------------------ */}
+      {unlocked ? (
+        <article className="max-w-none font-body">
+          <h2 className="font-headline text-xl sm:text-2xl text-primary mb-4">
             Role Description
           </h2>
-          <div className="text-on-surface whitespace-pre-line leading-relaxed">
+          <div className="text-on-surface whitespace-pre-line leading-relaxed text-sm sm:text-base">
             {job.descriptionMd ?? "(No description provided.)"}
           </div>
         </article>
       ) : (
-        <PaywallOverlay
+        <LockedOverlay
           pricePaise={job.unlockPricePaise}
-          onUnlock={onUnlockClick}
+          onUnlock={onUnlock}
         />
       )}
+    </div>
+  );
+}
 
-      <UnlockSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        jobId={job._id}
-        jobTitle={job.title}
-        unlockPricePaise={job.unlockPricePaise}
-      />
+function LockedOverlay({
+  pricePaise,
+  onUnlock,
+}: {
+  pricePaise: number;
+  onUnlock: () => void;
+}) {
+  return (
+    <div className="relative">
+      {/* Blurred fake content */}
+      <div className="select-none pointer-events-none" aria-hidden>
+        <div className="space-y-3 blur-md opacity-40">
+          <div className="h-4 bg-surface-container-high rounded w-full" />
+          <div className="h-4 bg-surface-container-high rounded w-5/6" />
+          <div className="h-4 bg-surface-container-high rounded w-4/6" />
+          <div className="h-4 bg-surface-container-high rounded w-full" />
+          <div className="h-4 bg-surface-container-high rounded w-3/4" />
+          <div className="h-4 bg-surface-container-high rounded w-5/6" />
+          <div className="h-4 bg-surface-container-high rounded w-2/3" />
+          <div className="h-4 bg-surface-container-high rounded w-full" />
+        </div>
+      </div>
+
+      {/* Paywall CTA overlay */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-2xl p-6 sm:p-10 text-center max-w-md shadow-2xl">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center">
+            <Icon name="lock" className="text-3xl text-primary" />
+          </div>
+          <h3 className="font-headline text-xl sm:text-2xl font-bold text-primary mb-2">
+            This job is locked
+          </h3>
+          <p className="font-body text-sm text-on-surface-variant mb-6">
+            Unlock to see the full description, company details, location, and
+            apply link.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={onUnlock}
+              className="w-full bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-lg hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2"
+            >
+              <Icon name="lock_open" />
+              Unlock for ₹{(pricePaise / 100).toFixed(0)}
+            </button>
+            <Link
+              to="/pricing"
+              className="w-full border border-primary/30 text-primary font-headline font-medium px-6 py-3 rounded-lg hover:bg-primary/5 transition-colors inline-flex items-center justify-center gap-2"
+            >
+              <Icon name="diamond" />
+              Subscribe — unlock all jobs
+            </Link>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

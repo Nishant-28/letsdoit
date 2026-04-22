@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { api } from "../../convex/_generated/api";
-import { useAuth } from "@/lib/auth";
 import { JobCard } from "@/components/JobCard";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
@@ -17,8 +16,6 @@ function useDebounced<T>(value: T, ms = 250): T {
 }
 
 export function Explore() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
   const [searchInput, setSearchInput] = useState("");
   const [activeCat, setActiveCat] = useState<string | undefined>(undefined);
   const [activeSub, setActiveSub] = useState<string | undefined>(undefined);
@@ -31,7 +28,13 @@ export function Explore() {
     categorySlug: activeCat,
     subcategorySlug: activeSub,
   });
+  const savedJobIds = useQuery(api.savedJobs.mySavedJobIds, {});
   const seed = useMutation(api.jobs.seedSampleData);
+
+  const savedSet = useMemo(
+    () => new Set(savedJobIds ?? []),
+    [savedJobIds],
+  );
 
   const activeCategoryId = useMemo(() => {
     if (!activeCat || !categories) return undefined;
@@ -48,17 +51,13 @@ export function Explore() {
   }, [activeCat]);
 
   const onSeed = async () => {
-    if (!user) {
-      navigate("/login", { state: { from: "/" } });
-      return;
-    }
     await seed({});
   };
 
   return (
     <>
       {/* Hero ----------------------------------------------------------- */}
-      <section className="relative pt-32 pb-40 px-8 flex flex-col items-center justify-center text-center overflow-hidden hero-gradient">
+      <section className="relative pt-20 sm:pt-32 pb-24 sm:pb-40 px-4 sm:px-8 flex flex-col items-center justify-center text-center overflow-hidden hero-gradient">
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-20">
           <svg height="100%" width="100%" xmlns="http://www.w3.org/2000/svg">
             <defs>
@@ -81,29 +80,29 @@ export function Explore() {
           </svg>
         </div>
         <div className="relative z-10 max-w-4xl mx-auto">
-          <h1 className="font-headline text-5xl md:text-[5rem] leading-[1.1] font-bold tracking-tighter text-primary mb-8 drop-shadow-sm">
+          <h1 className="font-headline text-3xl sm:text-5xl md:text-[5rem] leading-[1.1] font-bold tracking-tighter text-primary mb-4 sm:mb-8 drop-shadow-sm">
             Your Journey
             <br />
             Starts Here.
           </h1>
-          <p className="font-body text-xl md:text-2xl text-on-surface-variant max-w-2xl mx-auto mb-12 font-light">
+          <p className="font-body text-base sm:text-xl md:text-2xl text-on-surface-variant max-w-2xl mx-auto mb-6 sm:mb-12 font-light">
             Engineered precision for the next generation of technical talent.
             Discover roles that define the future.
           </p>
-          <div className="w-full max-w-2xl mx-auto bg-surface-container-low rounded-xl p-2 flex items-center shadow-[0_32px_64px_-15px_rgba(229,226,225,0.04)] focus-within:ring-2 focus-within:ring-outline-variant transition-all duration-300">
-            <Icon name="search" className="text-outline ml-4 mr-3" />
+          <div className="w-full max-w-2xl mx-auto bg-surface-container-low rounded-xl p-1.5 sm:p-2 flex items-center shadow-[0_32px_64px_-15px_rgba(229,226,225,0.04)] focus-within:ring-2 focus-within:ring-outline-variant transition-all duration-300">
+            <Icon name="search" className="text-outline ml-2 sm:ml-4 mr-2 sm:mr-3 text-lg sm:text-2xl" />
             <input
-              className="w-full bg-transparent border-none text-primary placeholder-outline font-body text-lg focus:ring-0 px-2 py-3 outline-none"
-              placeholder="Search roles, skills, or companies..."
+              className="w-full bg-transparent border-none text-primary placeholder-outline font-body text-sm sm:text-lg focus:ring-0 px-1 sm:px-2 py-2 sm:py-3 outline-none"
+              placeholder="Search roles, skills..."
               type="text"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
             <Link
               to="#opportunities"
-              className="bg-surface-container-highest text-primary font-label font-medium px-6 py-3 rounded-lg ml-2 hover:bg-surface-variant transition-colors flex items-center gap-2"
+              className="bg-surface-container-highest text-primary font-label font-medium px-3 sm:px-6 py-2 sm:py-3 rounded-lg ml-1 sm:ml-2 hover:bg-surface-variant transition-colors flex items-center gap-1 sm:gap-2 text-sm sm:text-base whitespace-nowrap"
             >
-              <span>Explore</span>
+              <span className="hidden sm:inline">Explore</span>
               <Icon name="arrow_forward" className="text-sm" />
             </Link>
           </div>
@@ -111,14 +110,14 @@ export function Explore() {
       </section>
 
       {/* Categories ----------------------------------------------------- */}
-      <section className="py-24 px-8 bg-surface-container-low">
+      <section className="py-12 sm:py-24 px-4 sm:px-8 bg-surface-container-low">
         <div className="max-w-screen-2xl mx-auto">
-          <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 sm:mb-16 gap-4 sm:gap-6">
             <div>
-              <h2 className="font-headline text-3xl md:text-4xl font-bold tracking-tight text-primary mb-4">
+              <h2 className="font-headline text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-primary mb-2 sm:mb-4">
                 Discovery Nodes
               </h2>
-              <p className="font-body text-lg text-on-surface-variant">
+              <p className="font-body text-sm sm:text-lg text-on-surface-variant">
                 Navigate our primary structural sectors.
               </p>
             </div>
@@ -128,13 +127,13 @@ export function Explore() {
                 setActiveCat(undefined);
                 setActiveSub(undefined);
               }}
-              className="font-label text-sm text-primary uppercase tracking-widest flex items-center gap-2 hover:opacity-70 transition-opacity"
+              className="font-label text-xs sm:text-sm text-primary uppercase tracking-widest flex items-center gap-2 hover:opacity-70 transition-opacity"
             >
               View All Sectors
               <Icon name="east" className="text-base" />
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
             {(categories ?? []).map((c) => (
               <button
                 key={c._id}
@@ -143,47 +142,47 @@ export function Explore() {
                   setActiveCat((cur) => (cur === c.slug ? undefined : c.slug))
                 }
                 className={cn(
-                  "text-left bg-surface-container-high rounded-xl p-8 hover:bg-surface-container-highest transition-colors duration-300 group cursor-pointer relative overflow-hidden",
+                  "text-left bg-surface-container-high rounded-xl p-4 sm:p-8 hover:bg-surface-container-highest transition-colors duration-300 group cursor-pointer relative overflow-hidden",
                   activeCat === c.slug && "ring-2 ring-primary",
                 )}
               >
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Icon name={c.icon} className="text-6xl" />
+                <div className="absolute top-0 right-0 p-2 sm:p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <Icon name={c.icon} className="text-4xl sm:text-6xl" />
                 </div>
-                <div className="bg-surface-container p-4 rounded-lg inline-block mb-6 shadow-sm group-hover:scale-105 transition-transform">
-                  <Icon name={c.icon} className="text-primary text-2xl" />
+                <div className="bg-surface-container p-2.5 sm:p-4 rounded-lg inline-block mb-3 sm:mb-6 shadow-sm group-hover:scale-105 transition-transform">
+                  <Icon name={c.icon} className="text-primary text-lg sm:text-2xl" />
                 </div>
-                <h3 className="font-headline text-xl font-semibold text-primary mb-2">
+                <h3 className="font-headline text-sm sm:text-xl font-semibold text-primary mb-1 sm:mb-2">
                   {c.name}
                 </h3>
-                <p className="font-body text-sm text-outline mb-6">
+                <p className="font-body text-xs sm:text-sm text-outline mb-3 sm:mb-6 line-clamp-2">
                   {c.description}
                 </p>
-                <div className="flex items-center justify-between text-on-surface-variant text-sm font-label">
+                <div className="flex items-center justify-between text-on-surface-variant text-[10px] sm:text-sm font-label">
                   <span>{activeCat === c.slug ? "Filtering" : "Tap to filter"}</span>
                   <Icon
                     name="arrow_forward"
-                    className="opacity-0 group-hover:opacity-100 transform translate-x-[-10px] group-hover:translate-x-0 transition-all duration-300"
+                    className="opacity-0 group-hover:opacity-100 transform translate-x-[-10px] group-hover:translate-x-0 transition-all duration-300 hidden sm:block"
                   />
                 </div>
               </button>
             ))}
             {categories && categories.length === 0 ? (
-              <div className="md:col-span-2 lg:col-span-4 text-on-surface-variant text-sm flex items-center justify-between bg-surface-container rounded-xl p-6">
+              <div className="col-span-2 lg:col-span-4 text-on-surface-variant text-sm flex items-center justify-between bg-surface-container rounded-xl p-4 sm:p-6">
                 <span>No categories yet.</span>
                 <button
                   type="button"
                   onClick={onSeed}
                   className="bg-primary text-on-primary font-label px-4 py-2 rounded-md text-xs"
                 >
-                  {user ? "Seed sample data" : "Sign in to seed"}
+                  Seed sample data
                 </button>
               </div>
             ) : null}
           </div>
 
           {filteredSubs.length > 0 ? (
-            <div className="mt-10 flex flex-wrap gap-2">
+            <div className="mt-6 sm:mt-10 flex flex-wrap gap-2">
               <span className="text-xs font-label uppercase tracking-widest text-on-surface-variant self-center mr-2">
                 Refine:
               </span>
@@ -195,7 +194,7 @@ export function Explore() {
                     setActiveSub((cur) => (cur === s.slug ? undefined : s.slug))
                   }
                   className={cn(
-                    "px-3 py-1.5 rounded-full text-sm font-label border transition-colors",
+                    "px-3 py-1.5 rounded-full text-xs sm:text-sm font-label border transition-colors",
                     activeSub === s.slug
                       ? "bg-primary text-on-primary border-primary"
                       : "border-outline text-on-surface-variant hover:bg-surface-container-high",
@@ -210,16 +209,15 @@ export function Explore() {
       </section>
 
       {/* Opportunities -------------------------------------------------- */}
-      <section id="opportunities" className="py-32 px-8 bg-surface">
+      <section id="opportunities" className="py-16 sm:py-32 px-4 sm:px-8 bg-surface">
         <div className="max-w-screen-2xl mx-auto">
-          <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-6 border-b border-surface-container-low pb-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 sm:mb-16 gap-4 sm:gap-6 border-b border-surface-container-low pb-6 sm:pb-8">
             <div className="w-full md:w-2/3">
-              <h2 className="font-headline text-4xl md:text-5xl font-bold tracking-tighter text-primary mb-4">
+              <h2 className="font-headline text-2xl sm:text-4xl md:text-5xl font-bold tracking-tighter text-primary mb-2 sm:mb-4">
                 Curated Opportunities
               </h2>
-              <p className="font-body text-lg text-on-surface-variant max-w-xl">
-                High-fidelity signals from leading aerospace and clean-tech
-                organizations.
+              <p className="font-body text-sm sm:text-lg text-on-surface-variant max-w-xl">
+                High-fidelity signals from leading organizations.
                 {activeCat ? (
                   <>
                     {" "}
@@ -240,20 +238,26 @@ export function Explore() {
               <button
                 type="button"
                 onClick={onSeed}
-                className="bg-surface-container-low text-on-surface px-6 py-3 rounded-lg font-label text-sm hover:bg-surface-container-high transition-colors"
+                className="bg-surface-container-low text-on-surface px-4 sm:px-6 py-2 sm:py-3 rounded-lg font-label text-xs sm:text-sm hover:bg-surface-container-high transition-colors"
               >
-                {user ? "Seed sample data" : "Sign in to seed"}
+                Seed sample data
               </button>
             </div>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
             {jobs === undefined ? (
               <SkeletonList />
             ) : jobs.length === 0 ? (
-              <EmptyState onSeed={onSeed} signedIn={!!user} />
+              <EmptyState onSeed={onSeed} />
             ) : (
-              jobs.map((j) => <JobCard key={j._id} job={j} />)
+              jobs.map((j) => (
+                <JobCard
+                  key={j._id}
+                  job={j}
+                  isSaved={savedSet.has(j._id)}
+                />
+              ))
             )}
           </div>
         </div>
@@ -268,35 +272,29 @@ function SkeletonList() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="bg-surface-container-lowest border border-outline-variant/15 p-8 rounded-xl animate-pulse h-32"
+          className="bg-surface-container-lowest border border-outline-variant/15 p-6 sm:p-8 rounded-xl animate-pulse h-24 sm:h-32"
         />
       ))}
     </>
   );
 }
 
-function EmptyState({
-  onSeed,
-  signedIn,
-}: {
-  onSeed: () => void;
-  signedIn: boolean;
-}) {
+function EmptyState({ onSeed }: { onSeed: () => void }) {
   return (
-    <div className="bg-surface-container-lowest border border-outline-variant/15 p-12 rounded-xl text-center">
-      <Icon name="travel_explore" className="text-5xl text-outline mb-4" />
-      <h3 className="font-headline text-xl text-primary mb-2">
+    <div className="bg-surface-container-lowest border border-outline-variant/15 p-8 sm:p-12 rounded-xl text-center">
+      <Icon name="travel_explore" className="text-4xl sm:text-5xl text-outline mb-4" />
+      <h3 className="font-headline text-lg sm:text-xl text-primary mb-2">
         No signals received.
       </h3>
-      <p className="font-body text-on-surface-variant mb-6">
+      <p className="font-body text-sm text-on-surface-variant mb-6">
         Either no jobs are published yet or your filters are too narrow.
       </p>
       <button
         type="button"
         onClick={onSeed}
-        className="bg-primary text-on-primary font-label px-6 py-3 rounded-md"
+        className="bg-primary text-on-primary font-label px-6 py-3 rounded-md text-sm"
       >
-        {signedIn ? "Seed sample data" : "Sign in to seed"}
+        Seed sample data
       </button>
     </div>
   );

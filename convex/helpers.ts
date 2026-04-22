@@ -33,11 +33,36 @@ export async function maybeUser(
     .unique();
 }
 
+/**
+ * Single operator email allowed in the admin surface. Mirrors
+ * `src/lib/admin.ts` on the client. Changing admin access requires
+ * touching both files intentionally.
+ */
+export const ADMIN_EMAIL = "inet.nishant@gmail.com";
+
+/** Gmail and some IdPs vary casing; WorkOS JWT `email` may be missing on some token shapes. */
+export function normalizeEmail(email: string | undefined | null): string {
+  return (email ?? "").trim().toLowerCase();
+}
+
+export function isOperatorEmail(email: string | undefined | null): boolean {
+  return normalizeEmail(email) === normalizeEmail(ADMIN_EMAIL);
+}
+
+/**
+ * Admin authorization is role-based. Admins are created by:
+ * - legacy auto-promotion for `ADMIN_EMAIL` on sync, or
+ * - onboarding / `claimAdminWithCode` when `ADMIN_SIGNUP_SECRET` matches.
+ *
+ * We do not trust client-selected role without the server-side secret check.
+ */
 export async function requireAdmin(
   ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"users">> {
   const user = await requireUser(ctx);
-  if (user.role !== "admin") throw new Error("Admin access required.");
+  if (user.role !== "admin") {
+    throw new Error("Admin access required.");
+  }
   return user;
 }
 
@@ -131,3 +156,57 @@ export type PublicJob =
       applyUrl: string;
       descriptionMd: string;
     });
+
+/**
+ * Batch entitlement checker — fetches all active entitlements for a user
+ * in a single query and returns a lookup-friendly structure.
+ * Call once per request, then check `isSubscriber` or `unlockedJobIds.has(jobId)`.
+ */
+export type UserAccessSet = {
+  isSubscriber: boolean;
+  unlockedJobIds: Set<Id<"jobs">>;
+};
+
+const EMPTY_ACCESS: UserAccessSet = {
+  isSubscriber: false,
+  unlockedJobIds: new Set(),
+};
+
+export async function getUserAccessSet(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users"> | null,
+): Promise<UserAccessSet> {
+  if (!userId) return EMPTY_ACCESS;
+
+  const active = await ctx.db
+    .query("entitlements")
+    .withIndex("by_user_status", (q) =>
+      q.eq("userId", userId).eq("status", "active"),
+    )
+    .collect();
+
+  let isSubscriber = false;
+  const unlockedJobIds = new Set<Id<"jobs">>();
+
+  for (const e of active) {
+    if (e.kind === "subscription") {
+      isSubscriber = true;
+    } else if (e.kind === "role" && e.jobId) {
+      unlockedJobIds.add(e.jobId);
+    }
+  }
+
+  return { isSubscriber, unlockedJobIds };
+}
+
+/**
+ * Determine if a user can see the full details of a specific job,
+ * given a pre-fetched access set.
+ */
+export function canAccessJob(
+  access: UserAccessSet,
+  jobId: Id<"jobs">,
+): boolean {
+  return access.isSubscriber || access.unlockedJobIds.has(jobId);
+}
+

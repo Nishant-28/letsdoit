@@ -1,5 +1,4 @@
 import { ConvexReactClient } from "convex/react";
-import { setConvexClient } from "./workosSession";
 
 // Must stay a literal `process.env.CONVEX_URL` so Bun can inline it for the browser bundle
 // (see bunfig.toml [serve.static] env). Do not indirect through `const e = process.env`.
@@ -11,7 +10,3 @@ if (!url) {
 }
 
 export const convex = new ConvexReactClient(url);
-
-// Register the client with the session store so it can call WorkOS proxy
-// actions (see `src/lib/workosSession.ts`) before React mounts.
-setConvexClient(convex);

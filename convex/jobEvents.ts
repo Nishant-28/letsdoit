@@ -60,5 +60,27 @@ export const adminCountsByJob = query({
   },
 });
 
+/**
+ * Fire-and-forget click event, called when a user taps on a job card
+ * from the explore page (before navigating to the detail page).
+ */
+export const recordClick = mutation({
+  args: { jobId: v.id("jobs") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.status !== "published") return null;
+    const user = await maybeUser(ctx);
+    await ctx.db.insert("jobEvents", {
+      jobId: args.jobId,
+      userId: user?._id,
+      kind: "click",
+      at: Date.now(),
+    });
+    return null;
+  },
+});
+
 // Re-export the kind validator to keep imports predictable.
 export { jobEventKind };
+

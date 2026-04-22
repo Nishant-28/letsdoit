@@ -11,8 +11,7 @@
  *     call an internal mutation that inserts the matching `entitlements`
  *     row, replacing `entitlements.mockUnlockJob` /
  *     `entitlements.mockSubscribe`.
- *   - `UnlockSheet.tsx` will swap its `useMutation(api.entitlements.mockX)`
- *     calls for `useAction(api.payments.createOrder)` + redirect.
+ *   - The client will call `useAction(api.payments.createOrder)` + redirect.
  *
  * TODO(phase-3): implement the action, see https://docs.cashfree.com/docs.
  */

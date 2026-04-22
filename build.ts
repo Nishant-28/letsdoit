@@ -132,6 +132,8 @@ const result = await Bun.build({
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
     "process.env.CONVEX_URL": JSON.stringify(process.env.CONVEX_URL ?? ""),
+    "process.env.VITE_WORKOS_CLIENT_ID": JSON.stringify(process.env.VITE_WORKOS_CLIENT_ID ?? ""),
+    "process.env.VITE_WORKOS_REDIRECT_URI": JSON.stringify(process.env.VITE_WORKOS_REDIRECT_URI ?? ""),
   },
   ...cliConfig,
 });

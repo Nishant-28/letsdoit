@@ -1,218 +1,270 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Icon } from "@/components/Icon";
+import { PageHeader } from "@/components/app/PageHeader";
+import { FullPageLoader } from "@/components/auth/FullPageLoader";
 import { cn } from "@/lib/utils";
+
+type AdminJob = FunctionReturnType<typeof api.jobs.adminList>[number];
+
+const statusConfig: Record<
+  AdminJob["status"],
+  { label: string; tone: string }
+> = {
+  draft: {
+    label: "Draft",
+    tone: "text-on-surface-variant bg-surface-container border-outline-variant/20",
+  },
+  published: {
+    label: "Live",
+    tone: "text-primary bg-primary/10 border-primary/30",
+  },
+  archived: {
+    label: "Archived",
+    tone: "text-outline-variant bg-surface-container border-outline-variant/15",
+  },
+};
+
+const levelLabel: Record<string, string> = {
+  intern: "Intern",
+  entry: "Entry",
+  junior: "Junior",
+  mid: "Mid",
+  senior: "Senior",
+  staff: "Staff",
+  principal: "Principal",
+};
+
+function relativeTime(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
 
 export function AdminJobs() {
   const jobs = useQuery(api.jobs.adminList, {});
-  const counts = useQuery(api.jobEvents.adminCountsByJob, {});
-  const archive = useMutation(api.jobs.adminArchive);
-  const del = useMutation(api.jobs.adminDelete);
-  const seed = useMutation(api.jobs.seedSampleData);
+  const archiveJob = useMutation(api.jobs.adminArchive);
+  const deleteJob = useMutation(api.jobs.adminDelete);
+  const updateJob = useMutation(api.jobs.adminUpdate);
+  const navigate = useNavigate();
 
-  const [pendingDelete, setPendingDelete] = useState<{
-    id: Id<"jobs">;
-    title: string;
-  } | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Id<"jobs"> | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const countsByJob = useMemo(() => {
-    const map = new Map<
-      string,
-      { views: number; unlocks: number; applies: number }
-    >();
-    for (const c of counts ?? []) {
-      map.set(c.jobId as unknown as string, {
-        views: c.views,
-        unlocks: c.unlocks,
-        applies: c.applies,
-      });
-    }
-    return map;
-  }, [counts]);
+  if (jobs === undefined) {
+    return <FullPageLoader label="Loading jobs" />;
+  }
+
+  const filtered =
+    statusFilter === "all"
+      ? jobs
+      : jobs.filter((j) => j.status === statusFilter);
+
+  const counts = {
+    all: jobs.length,
+    published: jobs.filter((j) => j.status === "published").length,
+    draft: jobs.filter((j) => j.status === "draft").length,
+    archived: jobs.filter((j) => j.status === "archived").length,
+  };
 
   return (
-    <div className="px-10 py-10">
-      <header className="flex items-center justify-between mb-10">
-        <div>
-          <h1 className="font-headline text-3xl font-bold text-primary tracking-tighter">
-            Jobs
-          </h1>
-          <p className="text-on-surface-variant text-sm">
-            Create, edit, archive job listings.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => seed({})}
-          >
-            <Icon name="auto_awesome" className="text-base" />
-            Seed samples
-          </Button>
-          <Button asChild>
-            <Link to="/admin/jobs/new">
-              <Icon name="add" className="text-base" /> New Job
+    <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 md:px-8 py-6 sm:py-10 md:py-14 space-y-6 sm:space-y-8">
+      <PageHeader
+        eyebrow={
+          <span className="inline-flex items-center gap-2">
+            <Link
+              to="/admin"
+              className="hover:text-primary transition-colors"
+            >
+              Admin
             </Link>
-          </Button>
-        </div>
-      </header>
+            <span className="text-outline-variant/40">/</span>
+            Jobs
+          </span>
+        }
+        title="Job management"
+        description="Create, edit, publish, and archive job listings."
+        actions={
+          <Link
+            to="/admin/jobs/new"
+            className="inline-flex items-center gap-2 bg-primary text-on-primary font-headline px-4 sm:px-5 py-2.5 rounded-lg hover:bg-primary-container transition-colors text-sm sm:text-base"
+          >
+            <Icon name="add" className="text-base" />
+            Create Job
+          </Link>
+        }
+      />
 
-      {jobs === undefined ? (
-        <div className="bg-surface-container-low animate-pulse h-64 rounded-xl" />
-      ) : jobs.length === 0 ? (
-        <div className="bg-surface-container-low border border-outline-variant/15 rounded-xl p-12 text-center">
-          <Icon name="work_off" className="text-4xl text-outline mb-2" />
-          <div className="text-on-surface-variant">No jobs yet.</div>
+      {/* Filter tabs */}
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {(["all", "published", "draft", "archived"] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setStatusFilter(f)}
+            className={cn(
+              "font-label text-xs uppercase tracking-widest px-3 py-1.5 rounded-full border transition-colors whitespace-nowrap",
+              statusFilter === f
+                ? "bg-primary text-on-primary border-primary"
+                : "bg-transparent text-on-surface-variant border-outline-variant/30 hover:bg-surface-container-low",
+            )}
+          >
+            {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}{" "}
+            <span className="opacity-60">
+              {counts[f]}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Job list */}
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-outline-variant/25 px-6 py-12 text-center">
+          <Icon name="inventory_2" className="text-4xl text-outline mb-3" />
+          <div className="font-headline text-base text-primary mb-1">
+            No jobs found
+          </div>
+          <p className="font-body text-sm text-on-surface-variant mb-6">
+            {statusFilter === "all"
+              ? "Create your first job listing."
+              : `No ${statusFilter} jobs.`}
+          </p>
+          <Link
+            to="/admin/jobs/new"
+            className="inline-flex items-center gap-2 bg-primary text-on-primary font-label px-5 py-2.5 rounded-md text-sm"
+          >
+            <Icon name="add" />
+            Create Job
+          </Link>
         </div>
       ) : (
-        <div className="bg-surface-container-low border border-outline-variant/15 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-container text-on-surface-variant text-left text-xs uppercase tracking-widest font-label">
-              <tr>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Company</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Price</th>
-                <th className="px-4 py-3">Activity</th>
-                <th className="px-4 py-3">Posted</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((j) => {
-                const c = countsByJob.get(j._id as unknown as string);
-                return (
-                  <tr
-                    key={j._id}
-                    className="border-t border-outline-variant/10 hover:bg-surface-container/50"
-                  >
-                    <td className="px-4 py-3 font-headline text-primary">
+        <div className="rounded-xl border border-outline-variant/15 bg-surface-container-lowest overflow-hidden">
+          {/* Table header (desktop) */}
+          <div className="hidden md:grid grid-cols-[1fr_140px_100px_100px_120px_80px] gap-4 px-5 py-3 border-b border-outline-variant/10 font-label text-[10px] uppercase tracking-[0.2em] text-outline-variant">
+            <span>Job</span>
+            <span>Company</span>
+            <span>Level</span>
+            <span>Status</span>
+            <span>Posted</span>
+            <span className="text-right">Actions</span>
+          </div>
+
+          <ul className="divide-y divide-outline-variant/10">
+            {filtered.map((j) => (
+              <li key={j._id}>
+                <div className="flex flex-col md:grid md:grid-cols-[1fr_140px_100px_100px_120px_80px] gap-2 md:gap-4 px-4 sm:px-5 py-3 sm:py-4 hover:bg-surface-container-low transition-colors items-start md:items-center">
+                  {/* Title */}
+                  <div className="min-w-0">
+                    <Link
+                      to={`/admin/jobs/${j._id}/edit`}
+                      className="font-headline text-sm font-semibold text-primary truncate block hover:underline"
+                    >
                       {j.title}
-                    </td>
-                    <td className="px-4 py-3 text-on-surface">
-                      {j.companyName}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusPill status={j.status} />
-                    </td>
-                    <td className="px-4 py-3 text-on-surface">
-                      ${(j.unlockPricePaise / 100).toFixed(0)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-on-surface-variant whitespace-nowrap">
-                      <span title="Views">👁 {c?.views ?? 0}</span>
-                      {" · "}
-                      <span title="Unlocks">🔓 {c?.unlocks ?? 0}</span>
-                      {" · "}
-                      <span title="Applies">✉ {c?.applies ?? 0}</span>
-                    </td>
-                    <td className="px-4 py-3 text-on-surface-variant">
-                      {new Date(j.postedAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <Button asChild size="sm" variant="outline">
-                        <Link to={`/admin/jobs/${j._id}`}>Edit</Link>
-                      </Button>
-                      {j.status !== "archived" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => archive({ id: j._id })}
-                        >
-                          Archive
-                        </Button>
-                      ) : null}
-                      <Button
-                        size="sm"
-                        variant="destructive"
+                    </Link>
+                    <div className="font-body text-xs text-on-surface-variant truncate mt-0.5 md:hidden">
+                      {j.companyName} · {levelLabel[j.level]} · {relativeTime(j.postedAt)}
+                    </div>
+                  </div>
+
+                  {/* Company (desktop) */}
+                  <span className="hidden md:block font-body text-xs text-on-surface-variant truncate">
+                    {j.companyName}
+                  </span>
+
+                  {/* Level (desktop) */}
+                  <span className="hidden md:block font-label text-xs text-on-surface-variant">
+                    {levelLabel[j.level]}
+                  </span>
+
+                  {/* Status */}
+                  <div className="md:block">
+                    <span
+                      className={cn(
+                        "font-label text-[10px] uppercase tracking-[0.18em] px-2 py-0.5 rounded-full border inline-block",
+                        statusConfig[j.status].tone,
+                      )}
+                    >
+                      {statusConfig[j.status].label}
+                    </span>
+                  </div>
+
+                  {/* Posted (desktop) */}
+                  <span className="hidden md:block font-label text-xs text-outline-variant">
+                    {relativeTime(j.postedAt)}
+                  </span>
+
+                  {/* Actions */}
+                  <div className="flex gap-1 md:justify-end">
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={() => navigate(`/admin/jobs/${j._id}/edit`)}
+                      className="w-8 h-8 rounded-md flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                    >
+                      <Icon name="edit" className="text-sm" />
+                    </button>
+                    {j.status === "draft" && (
+                      <button
+                        type="button"
+                        title="Publish"
                         onClick={() =>
-                          setPendingDelete({ id: j._id, title: j.title })
+                          updateJob({ id: j._id, ...j, status: "published" })
                         }
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
                       >
-                        Delete
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        <Icon name="publish" className="text-sm" />
+                      </button>
+                    )}
+                    {j.status === "published" && (
+                      <button
+                        type="button"
+                        title="Archive"
+                        onClick={() => archiveJob({ id: j._id })}
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                      >
+                        <Icon name="archive" className="text-sm" />
+                      </button>
+                    )}
+                    {confirmDelete === j._id ? (
+                      <button
+                        type="button"
+                        title="Confirm delete"
+                        onClick={() => {
+                          deleteJob({ id: j._id });
+                          setConfirmDelete(null);
+                        }}
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-red-400 hover:bg-red-400/10 transition-colors animate-pulse"
+                      >
+                        <Icon name="check" className="text-sm" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        title="Delete"
+                        onClick={() => setConfirmDelete(j._id)}
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-on-surface-variant hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                      >
+                        <Icon name="delete" className="text-sm" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-
-      <Dialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete this job?</DialogTitle>
-            <DialogDescription>
-              This permanently removes{" "}
-              <span className="text-primary">{pendingDelete?.title}</span> and
-              every application referencing it will orphan.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setPendingDelete(null)}
-              disabled={deleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={deleting}
-              onClick={async () => {
-                if (!pendingDelete) return;
-                setDeleting(true);
-                try {
-                  await del({ id: pendingDelete.id });
-                  setPendingDelete(null);
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-            >
-              {deleting ? "Deleting…" : "Delete permanently"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: "draft" | "published" | "archived" }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center px-2 py-0.5 rounded-md font-label text-xs uppercase tracking-widest",
-        status === "published" &&
-          "bg-primary/10 text-primary border border-primary/30",
-        status === "draft" &&
-          "bg-surface-container-high text-on-surface-variant border border-outline-variant/30",
-        status === "archived" &&
-          "bg-error-container/30 text-error border border-error/30",
-      )}
-    >
-      {status}
-    </span>
   );
 }

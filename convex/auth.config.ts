@@ -1,21 +1,23 @@
-/**
- * Convex auth configuration for WorkOS AuthKit.
- *
- * The access token AuthKit issues has:
- *   iss: https://api.workos.com/user_management/<CLIENT_ID>
- *   aud: <CLIENT_ID>
- *
- * Both are derived from the client id. `WORKOS_CLIENT_ID` must be set in
- * the Convex deployment env (dashboard -> Settings -> Environment Variables
- * or `bunx convex env set WORKOS_CLIENT_ID ...`).
- */
-const clientId = process.env.WORKOS_CLIENT_ID ?? "";
+//  WORKOS AuthKit via Convex
 
-export default {
+const clientId = process.env.WORKOS_CLIENT_ID;
+
+const authConfig = {
   providers: [
     {
-      domain: `https://api.workos.com/user_management/${clientId}`,
+      type: "customJwt",
+      issuer: `https://api.workos.com/`,
+      algorithm: "RS256",
+      jwks: `https://api.workos.com/sso/jwks/${clientId}`,
       applicationID: clientId,
+    },
+    {
+      type: "customJwt",
+      issuer: `https://api.workos.com/user_management/${clientId}`,
+      algorithm: "RS256",
+      jwks: `https://api.workos.com/sso/jwks/${clientId}`,
     },
   ],
 };
+
+export default authConfig;

@@ -1,145 +1,111 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { useAuth } from "@/lib/auth";
-import * as session from "@/lib/workosSession";
-import {
-  AuthCard,
-  Field,
-  SubmitButton,
-  inputClass,
-  humanizeAuthError,
-} from "@/components/auth/AuthCard";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { useAuth } from "@workos-inc/authkit-react";
+import { AuthFrame } from "@/components/auth/AuthFrame";
+import { Icon } from "@/components/Icon";
 
-/**
- * Email + password sign-in.
- *
- * If WorkOS tells us the account exists but isn't verified yet, we route to
- * /verify-email with the `pendingAuthenticationToken` so the user can finish
- * onboarding without having to retype their credentials.
- */
 export function Login() {
-  const { user, authLoading } = useAuth();
-  const location = useLocation();
+  const { user, signIn } = useAuth();
   const navigate = useNavigate();
-  const from = (location.state as { from?: string } | null)?.from ?? "/";
-
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const nextParam = params.get("next");
+  const triggeredRef = useRef(false);
+  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem("postLoginTo", from);
-    }
-  }, [from]);
-
-  if (user) return <Navigate to={from} replace />;
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-
-    if (!email.trim() || !password) {
-      setError("Enter your email and password.");
+    if (user) {
+      // Already signed in — send them through the callback flow so we
+      // pick the right destination (onboarding vs. /app) based on state.
+      navigate("/callback", { replace: true });
       return;
     }
+    if (triggeredRef.current) return;
+    triggeredRef.current = true;
 
-    setSubmitting(true);
-    try {
-      const res = await session.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (res.kind === "email_verification_required") {
-        navigate("/verify-email", {
-          replace: true,
-          state: {
-            userId: res.userId,
-            email: res.email,
-            password,
-          },
-        });
-        return;
-      }
-      // AuthProvider will notice the new session and complete the Convex
-      // sync; RequireAuth renders children once `me` resolves.
-      navigate(from, { replace: true });
-    } catch (err) {
-      setError(humanizeAuthError(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
+    // Let the branded UI paint for a frame before we hand off to the
+    // WorkOS hosted flow so the page never looks blank.
+    const id = setTimeout(() => {
+      setRedirecting(true);
+      void signIn();
+    }, 250);
+    return () => clearTimeout(id);
+  }, [user, signIn, navigate]);
 
-  const bootstrapping = authLoading && !user;
+  const onContinue = () => {
+    setRedirecting(true);
+    void signIn();
+  };
 
   return (
-    <AuthCard
-      title="Welcome back"
-      subtitle="Sign in to access premium roles and track your applications."
+    <AuthFrame
+      eyebrow="Welcome back"
+      title="Sign in to your account"
+      subtitle="Continue with the email you used when you joined. We'll recognize you and drop you right back where you left off."
       footer={
-        <>
-          New here?{" "}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            New here?{" "}
+            <Link
+              to={nextParam ? `/signup?next=${nextParam}` : "/signup"}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Create an account
+            </Link>
+          </span>
           <Link
-            to="/signup"
-            state={{ from }}
-            className="text-primary font-medium hover:underline"
+            to="/"
+            className="text-xs uppercase tracking-widest text-outline-variant hover:text-primary"
           >
-            Create an account
-          </Link>
-        </>
-      }
-    >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <Field id="email" label="Email">
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            autoFocus
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={inputClass}
-            placeholder="you@example.com"
-            disabled={submitting}
-          />
-        </Field>
-        <Field id="password" label="Password">
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-            placeholder="••••••••"
-            disabled={submitting}
-          />
-        </Field>
-
-        <div className="flex justify-end -mt-1">
-          <Link
-            to="/forgot-password"
-            className="text-xs text-on-surface-variant hover:text-primary"
-          >
-            Forgot password?
+            Back to explore
           </Link>
         </div>
+      }
+    >
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={onContinue}
+          disabled={redirecting}
+          className="w-full inline-flex items-center justify-center gap-3 bg-primary text-on-primary font-headline font-semibold px-6 py-3.5 rounded-lg hover:bg-primary-container transition-colors disabled:opacity-70"
+        >
+          {redirecting ? (
+            <>
+              <span className="relative w-4 h-4">
+                <span className="absolute inset-0 rounded-full border border-on-primary/30" />
+                <span className="absolute inset-0 rounded-full border-t border-on-primary animate-spin" />
+              </span>
+              Opening secure sign in
+            </>
+          ) : (
+            <>
+              <Icon name="login" className="text-base" />
+              Continue with WorkOS
+            </>
+          )}
+        </button>
+        <div className="flex items-center gap-4 text-[11px] uppercase tracking-[0.25em] text-outline-variant">
+          <span className="flex-1 h-px bg-outline-variant/20" />
+          <span>Sign in options</span>
+          <span className="flex-1 h-px bg-outline-variant/20" />
+        </div>
+        <ul className="grid grid-cols-2 gap-3">
+          <MethodTile icon="alternate_email" label="Email & password" />
+          <MethodTile icon="code" label="GitHub" />
+        </ul>
+        <p className="text-xs text-outline-variant">
+          You'll be handed off to WorkOS — our identity layer — to complete
+          sign in. Encrypted and password-less by design.
+        </p>
+      </div>
+    </AuthFrame>
+  );
+}
 
-        {error ? (
-          <div className="text-sm text-error bg-error/10 border border-error/30 rounded-md px-3 py-2">
-            {error}
-          </div>
-        ) : null}
-
-        <SubmitButton pending={submitting || bootstrapping}>
-          Sign in
-        </SubmitButton>
-      </form>
-    </AuthCard>
+function MethodTile({ icon, label }: { icon: string; label: string }) {
+  return (
+    <li className="flex items-center gap-3 rounded-lg border border-outline-variant/20 bg-surface-container-lowest/60 px-4 py-3">
+      <Icon name={icon} className="text-base text-on-surface-variant" />
+      <span className="font-label text-xs text-on-surface-variant">{label}</span>
+    </li>
   );
 }

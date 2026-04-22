@@ -1,164 +1,109 @@
-import { useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { useAuth } from "@/lib/auth";
-import * as session from "@/lib/workosSession";
-import {
-  AuthCard,
-  Field,
-  SubmitButton,
-  inputClass,
-  humanizeAuthError,
-} from "@/components/auth/AuthCard";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { useAuth } from "@workos-inc/authkit-react";
+import { AuthFrame } from "@/components/auth/AuthFrame";
+import { Icon } from "@/components/Icon";
+import { DEFAULT_ADMIN_CODE } from "@/lib/admin";
 
-/** Minimum password length accepted. Keep in sync with the WorkOS project. */
-const MIN_PASSWORD_LENGTH = 8;
-
-/**
- * Create a WorkOS account, then hop to /verify-email carrying the userId,
- * email, and (in-memory) password so the verify screen can call
- * `verifyEmailAndSignIn` without asking the user to retype anything.
- */
 export function Signup() {
-  const { user } = useAuth();
-  const location = useLocation();
+  const { user, signUp } = useAuth();
   const navigate = useNavigate();
-  const from = (location.state as { from?: string } | null)?.from ?? "/";
+  const [params] = useSearchParams();
+  const nextParam = params.get("next");
+  const triggeredRef = useRef(false);
+  const [redirecting, setRedirecting] = useState(false);
 
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (user) return <Navigate to={from} replace />;
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-
-    if (!email.trim() || !password) {
-      setError("Enter your email and a password.");
+  useEffect(() => {
+    if (user) {
+      navigate("/callback", { replace: true });
       return;
     }
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-      return;
-    }
+    if (triggeredRef.current) return;
+    triggeredRef.current = true;
 
-    setSubmitting(true);
-    try {
-      const res = await session.signUpWithPassword({
-        email: email.trim(),
-        password,
-        firstName: firstName.trim() || undefined,
-        lastName: lastName.trim() || undefined,
-      });
-      navigate("/verify-email", {
-        replace: true,
-        state: {
-          userId: res.userId,
-          email: res.email,
-          password,
-          fresh: true,
-        },
-      });
-    } catch (err) {
-      setError(humanizeAuthError(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
+    const id = setTimeout(() => {
+      setRedirecting(true);
+      void signUp();
+    }, 250);
+    return () => clearTimeout(id);
+  }, [user, signUp, navigate]);
+
+  const onContinue = () => {
+    setRedirecting(true);
+    void signUp();
+  };
 
   return (
-    <AuthCard
-      title="Create your account"
-      subtitle="Join Let's Do It to unlock premium roles and track your applications."
+    <AuthFrame
+      eyebrow="Create account"
+      title="Start your journey"
+      subtitle="Tell us who you are and we'll surface the opportunities that fit. It takes less than a minute."
       footer={
-        <>
-          Already have an account?{" "}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Already have an account?{" "}
+            <Link
+              to={nextParam ? `/login?next=${nextParam}` : "/login"}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Sign in
+            </Link>
+          </span>
           <Link
-            to="/login"
-            state={{ from }}
-            className="text-primary font-medium hover:underline"
+            to="/"
+            className="text-xs uppercase tracking-widest text-outline-variant hover:text-primary"
           >
-            Sign in
+            Back to explore
           </Link>
-        </>
+        </div>
       }
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          <Field id="firstName" label="First name">
-            <input
-              id="firstName"
-              type="text"
-              autoComplete="given-name"
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              className={inputClass}
-              placeholder="Ada"
-              disabled={submitting}
-            />
-          </Field>
-          <Field id="lastName" label="Last name">
-            <input
-              id="lastName"
-              type="text"
-              autoComplete="family-name"
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              className={inputClass}
-              placeholder="Lovelace"
-              disabled={submitting}
-            />
-          </Field>
-        </div>
-        <Field id="email" label="Work email">
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={inputClass}
-            placeholder="you@example.com"
-            disabled={submitting}
-          />
-        </Field>
-        <Field
-          id="password"
-          label="Password"
-          hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={onContinue}
+          disabled={redirecting}
+          className="w-full inline-flex items-center justify-center gap-3 bg-primary text-on-primary font-headline font-semibold px-6 py-3.5 rounded-lg hover:bg-primary-container transition-colors disabled:opacity-70"
         >
-          <input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-            placeholder="••••••••"
-            disabled={submitting}
-          />
-        </Field>
+          {redirecting ? (
+            <>
+              <span className="relative w-4 h-4">
+                <span className="absolute inset-0 rounded-full border border-on-primary/30" />
+                <span className="absolute inset-0 rounded-full border-t border-on-primary animate-spin" />
+              </span>
+              Opening secure sign up
+            </>
+          ) : (
+            <>
+              <Icon name="person_add" className="text-base" />
+              Create account with WorkOS
+            </>
+          )}
+        </button>
+        <ul className="space-y-2.5 pt-2">
+          <Bullet>No passwords to manage — sign in with email or GitHub.</Bullet>
+          <Bullet>Tell us once whether you're hiring or job-hunting.</Bullet>
+          <Bullet>Secure your account with your Indian mobile number.</Bullet>
+          <Bullet>
+            Operator console: choose Platform administrator on onboarding and enter{" "}
+            <code className="text-[11px] bg-surface-container px-1 rounded">
+              {DEFAULT_ADMIN_CODE}
+            </code>{" "}
+            (or an optional Convex secret).
+          </Bullet>
+        </ul>
+      </div>
+    </AuthFrame>
+  );
+}
 
-        {error ? (
-          <div className="text-sm text-error bg-error/10 border border-error/30 rounded-md px-3 py-2">
-            {error}
-          </div>
-        ) : null}
-
-        <SubmitButton pending={submitting}>Create account</SubmitButton>
-
-        <p className="text-xs text-on-surface-variant text-center">
-          We'll send a 6-digit code to your email to verify it's you.
-        </p>
-      </form>
-    </AuthCard>
+function Bullet({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-3 text-sm text-on-surface-variant">
+      <span className="w-5 h-5 rounded-full bg-primary/10 border border-primary/30 text-primary flex items-center justify-center mt-0.5 shrink-0">
+        <Icon name="check" className="text-xs" />
+      </span>
+      <span>{children}</span>
+    </li>
   );
 }

@@ -66,6 +66,7 @@ export const jobEventKind = v.union(
   v.literal("view"),
   v.literal("unlock"),
   v.literal("apply"),
+  v.literal("click"),
 );
 
 export default defineSchema({
@@ -75,10 +76,14 @@ export default defineSchema({
     name: v.string(),
     role: userRole,
     intent: v.optional(userIntent),
+    /** India mobile number in E.164 format: +91XXXXXXXXXX */
+    phoneE164: v.optional(v.string()),
     /** True after the user fills the onboarding form on first sign-in. */
     onboardedAt: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_workosId", ["workosId"]),
+  })
+    .index("by_workosId", ["workosId"])
+    .index("by_phoneE164", ["phoneE164"]),
 
   companies: defineTable({
     slug: v.string(),

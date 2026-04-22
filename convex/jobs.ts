@@ -1,16 +1,16 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import {
   jobLevel,
   jobStatus,
   workMode,
 } from "./schema";
 import {
-  hasAccess,
+  canAccessJob,
+  getUserAccessSet,
   maybeUser,
   projectJob,
   requireAdmin,
-  requireUser,
 } from "./helpers";
 
 const PUBLIC_JOB_VALIDATOR = v.object({
@@ -71,6 +71,10 @@ export const listPublished = query({
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 50, 100);
 
+    // Resolve caller + entitlements ONCE (not per-job)
+    const user = await maybeUser(ctx);
+    const access = await getUserAccessSet(ctx, user?._id ?? null);
+
     let jobs;
     if (args.categorySlug) {
       const cat = await ctx.db
@@ -111,10 +115,9 @@ export const listPublished = query({
       );
     }
 
-    const user = await maybeUser(ctx);
     const out = [];
     for (const job of jobs) {
-      const unlocked = user ? await hasAccess(ctx, user._id, job._id) : false;
+      const unlocked = canAccessJob(access, job._id);
       out.push(await projectJob(ctx, job, unlocked));
     }
     return out;
@@ -127,8 +130,10 @@ export const getById = query({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.id);
     if (!job || job.status !== "published") return null;
+
     const user = await maybeUser(ctx);
-    const unlocked = user ? await hasAccess(ctx, user._id, job._id) : false;
+    const access = await getUserAccessSet(ctx, user?._id ?? null);
+    const unlocked = canAccessJob(access, job._id);
     return await projectJob(ctx, job, unlocked);
   },
 });
@@ -264,8 +269,6 @@ export const seedSampleData = mutation({
     jobsAdded: v.number(),
   }),
   handler: async (ctx) => {
-    await requireUser(ctx);
-
     const seedCats: Array<{
       slug: string;
       name: string;
@@ -464,3 +467,32 @@ export const seedSampleData = mutation({
     return { categoriesAdded, companiesAdded, jobsAdded };
   },
 });
+
+/**
+ * Internal cron task: auto-archive published jobs that are older than
+ * 30 days. Runs nightly. Processes up to 100 jobs per invocation to
+ * stay within transaction limits.
+ */
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const autoArchiveStale = internalMutation({
+  args: {},
+  returns: v.object({ archived: v.number() }),
+  handler: async (ctx) => {
+    const cutoff = Date.now() - THIRTY_DAYS_MS;
+    const stale = await ctx.db
+      .query("jobs")
+      .withIndex("by_status_postedAt", (q) => q.eq("status", "published"))
+      .take(100);
+
+    let archived = 0;
+    for (const job of stale) {
+      if (job.postedAt < cutoff) {
+        await ctx.db.patch(job._id, { status: "archived" });
+        archived++;
+      }
+    }
+    return { archived };
+  },
+});
+

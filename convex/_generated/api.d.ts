@@ -20,9 +20,9 @@ import type * as jobEvents from "../jobEvents.js";
 import type * as jobs from "../jobs.js";
 import type * as migrate from "../migrate.js";
 import type * as payments from "../payments.js";
+import type * as savedJobs from "../savedJobs.js";
 import type * as subcategories from "../subcategories.js";
 import type * as users from "../users.js";
-import type * as workos from "../workos.js";
 
 import type {
   ApiFromModules,
@@ -43,9 +43,9 @@ declare const fullApi: ApiFromModules<{
   jobs: typeof jobs;
   migrate: typeof migrate;
   payments: typeof payments;
+  savedJobs: typeof savedJobs;
   subcategories: typeof subcategories;
   users: typeof users;
-  workos: typeof workos;
 }>;
 
 /**

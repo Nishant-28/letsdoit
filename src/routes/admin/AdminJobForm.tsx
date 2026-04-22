@@ -1,358 +1,274 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Icon } from "@/components/Icon";
+import { PageHeader } from "@/components/app/PageHeader";
+import { FullPageLoader } from "@/components/auth/FullPageLoader";
 import { cn } from "@/lib/utils";
 
-const LEVELS = [
-  "intern",
-  "entry",
-  "junior",
-  "mid",
-  "senior",
-  "staff",
-  "principal",
-] as const;
-const WORK_MODES = ["remote", "hybrid", "onsite"] as const;
-const STATUSES = ["draft", "published", "archived"] as const;
+type Level = "intern" | "entry" | "junior" | "mid" | "senior" | "staff" | "principal";
+type WorkMode = "remote" | "hybrid" | "onsite";
+type Status = "draft" | "published" | "archived";
 
-type Level = (typeof LEVELS)[number];
-type WorkMode = (typeof WORK_MODES)[number];
-type Status = (typeof STATUSES)[number];
+const LEVELS: { value: Level; label: string }[] = [
+  { value: "intern", label: "Intern" },
+  { value: "entry", label: "Entry Level" },
+  { value: "junior", label: "Junior" },
+  { value: "mid", label: "Mid-Level" },
+  { value: "senior", label: "Senior" },
+  { value: "staff", label: "Staff" },
+  { value: "principal", label: "Principal" },
+];
 
-type FormState = {
-  title: string;
-  companyId: string;
-  location: string;
-  workMode: WorkMode;
-  level: Level;
-  categoryId: string;
-  subcategoryIds: string[];
-  skills: string;
-  tags: string;
-  unlockPricePaise: number;
-  applyUrl: string;
-  descriptionMd: string;
-  status: Status;
-};
-
-const EMPTY: FormState = {
-  title: "",
-  companyId: "",
-  location: "",
-  workMode: "remote",
-  level: "entry",
-  categoryId: "",
-  subcategoryIds: [],
-  skills: "",
-  tags: "",
-  unlockPricePaise: 900,
-  applyUrl: "",
-  descriptionMd: "",
-  status: "draft",
-};
+const WORK_MODES: { value: WorkMode; label: string; icon: string }[] = [
+  { value: "remote", label: "Remote", icon: "wifi" },
+  { value: "hybrid", label: "Hybrid", icon: "apartment" },
+  { value: "onsite", label: "Onsite", icon: "location_on" },
+];
 
 export function AdminJobForm() {
-  const { id } = useParams<{ id?: string }>();
-  const isEditing = Boolean(id);
+  const { id } = useParams<{ id: string }>();
+  const isEdit = !!id;
   const navigate = useNavigate();
 
-  const categories = useQuery(api.categories.list, {});
-  const companies = useQuery(api.companies.list, {});
-  const subcategories = useQuery(api.subcategories.listAll, {});
   const existing = useQuery(
     api.jobs.adminGet,
-    isEditing && id ? { id: id as Id<"jobs"> } : "skip",
+    isEdit ? { id: id as Id<"jobs"> } : "skip",
   );
+  const companies = useQuery(api.companies.list, {});
+  const categories = useQuery(api.categories.list, {});
+  const subcategories = useQuery(api.subcategories.listAll, {});
+
   const createJob = useMutation(api.jobs.adminCreate);
   const updateJob = useMutation(api.jobs.adminUpdate);
 
-  const [form, setForm] = useState<FormState>(EMPTY);
+  // Form state
+  const [title, setTitle] = useState("");
+  const [companyId, setCompanyId] = useState<string>("");
+  const [location, setLocation] = useState("");
+  const [workMode, setWorkMode] = useState<WorkMode>("onsite");
+  const [level, setLevel] = useState<Level>("entry");
+  const [categoryId, setCategoryId] = useState<string>("");
+  const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<string[]>([]);
+  const [skillsInput, setSkillsInput] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
+  const [unlockPrice, setUnlockPrice] = useState("9");
+  const [applyUrl, setApplyUrl] = useState("");
+  const [descriptionMd, setDescriptionMd] = useState("");
+  const [status, setStatus] = useState<Status>("draft");
+  const [salaryMin, setSalaryMin] = useState("");
+  const [salaryMax, setSalaryMax] = useState("");
+
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // Prefill form when editing
+  const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
-    if (isEditing && existing) {
-      setForm({
-        title: existing.title,
-        companyId: existing.companyId,
-        location: existing.location,
-        workMode: existing.workMode,
-        level: existing.level,
-        categoryId: existing.categoryId,
-        subcategoryIds: existing.subcategoryIds as unknown as string[],
-        skills: existing.skills.join(", "),
-        tags: existing.tags.join(", "),
-        unlockPricePaise: existing.unlockPricePaise,
-        applyUrl: existing.applyUrl,
-        descriptionMd: existing.descriptionMd,
-        status: existing.status,
-      });
+    if (isEdit && existing && !prefilled) {
+      setTitle(existing.title);
+      setCompanyId(existing.companyId);
+      setLocation(existing.location);
+      setWorkMode(existing.workMode);
+      setLevel(existing.level);
+      setCategoryId(existing.categoryId);
+      setSelectedSubcategoryIds(existing.subcategoryIds);
+      setSkillsInput(existing.skills.join(", "));
+      setTagsInput(existing.tags.join(", "));
+      setUnlockPrice(String(existing.unlockPricePaise / 100));
+      setApplyUrl(existing.applyUrl);
+      setDescriptionMd(existing.descriptionMd);
+      setStatus(existing.status);
+      if (existing.salaryMinPaise) setSalaryMin(String(existing.salaryMinPaise / 100));
+      if (existing.salaryMaxPaise) setSalaryMax(String(existing.salaryMaxPaise / 100));
+      setPrefilled(true);
     }
-  }, [isEditing, existing]);
+  }, [isEdit, existing, prefilled]);
 
-  useEffect(() => {
-    if (!isEditing && !form.categoryId && categories && categories.length) {
-      setForm((f) => ({ ...f, categoryId: categories[0]!._id }));
-    }
-  }, [categories, isEditing, form.categoryId]);
+  const filteredSubs = subcategories?.filter(
+    (s) => s.categoryId === categoryId,
+  ) ?? [];
 
-  useEffect(() => {
-    if (!isEditing && !form.companyId && companies && companies.length) {
-      setForm((f) => ({ ...f, companyId: companies[0]!._id }));
-    }
-  }, [companies, isEditing, form.companyId]);
-
-  const filteredSubs = useMemo(() => {
-    if (!subcategories || !form.categoryId) return [];
-    return subcategories.filter((s) => s.categoryId === form.categoryId);
-  }, [subcategories, form.categoryId]);
-
-  // Drop any previously-chosen subcategories that don't belong to the
-  // current category (admin switched category after selecting chips).
-  useEffect(() => {
-    if (!subcategories) return;
-    const allowed = new Set(
-      subcategories
-        .filter((s) => s.categoryId === form.categoryId)
-        .map((s) => s._id as unknown as string),
-    );
-    setForm((f) => {
-      const keep = f.subcategoryIds.filter((id) => allowed.has(id));
-      if (keep.length === f.subcategoryIds.length) return f;
-      return { ...f, subcategoryIds: keep };
-    });
-  }, [form.categoryId, subcategories]);
-
-  const onSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.categoryId) {
-      alert("Pick a category");
-      return;
-    }
-    if (!form.companyId) {
-      alert("Pick a company");
-      return;
-    }
+    setError(null);
+
+    if (!title.trim()) return setError("Title is required.");
+    if (!companyId) return setError("Select a company.");
+    if (!location.trim()) return setError("Location is required.");
+    if (!categoryId) return setError("Select a category.");
+    if (!applyUrl.trim()) return setError("Apply URL is required.");
+    if (!descriptionMd.trim()) return setError("Description is required.");
+
+    const skills = skillsInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const tags = tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (skills.length === 0) return setError("At least one skill is required.");
+
     const payload = {
-      title: form.title.trim(),
-      companyId: form.companyId as Id<"companies">,
-      location: form.location.trim(),
-      workMode: form.workMode,
-      level: form.level,
-      categoryId: form.categoryId as Id<"categories">,
-      subcategoryIds: form.subcategoryIds as unknown as Id<"subcategories">[],
-      skills: form.skills
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      tags: form.tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      unlockPricePaise: Number(form.unlockPricePaise) || 0,
-      applyUrl: form.applyUrl.trim(),
-      descriptionMd: form.descriptionMd,
-      status: form.status,
+      title: title.trim(),
+      companyId: companyId as Id<"companies">,
+      location: location.trim(),
+      workMode,
+      level,
+      categoryId: categoryId as Id<"categories">,
+      subcategoryIds: selectedSubcategoryIds as Id<"subcategories">[],
+      skills,
+      tags,
+      unlockPricePaise: Math.round(parseFloat(unlockPrice || "9") * 100),
+      applyUrl: applyUrl.trim(),
+      descriptionMd: descriptionMd.trim(),
+      status,
+      ...(salaryMin ? { salaryMinPaise: Math.round(parseFloat(salaryMin) * 100) } : {}),
+      ...(salaryMax ? { salaryMaxPaise: Math.round(parseFloat(salaryMax) * 100) } : {}),
     };
+
     setSaving(true);
     try {
-      if (isEditing && id) {
+      if (isEdit) {
         await updateJob({ id: id as Id<"jobs">, ...payload });
       } else {
         await createJob(payload);
       }
       navigate("/admin/jobs");
+    } catch (err: any) {
+      setError(err?.message ?? "Something went wrong.");
     } finally {
       setSaving(false);
     }
   };
 
-  if (isEditing && existing === undefined) {
+  // Loading states
+  if (isEdit && existing === undefined) {
+    return <FullPageLoader label="Loading job" />;
+  }
+  if (isEdit && existing === null) {
     return (
-      <div className="px-10 py-10">
-        <div className="h-64 bg-surface-container-low animate-pulse rounded-xl" />
+      <div className="max-w-xl mx-auto px-4 py-20 text-center">
+        <Icon name="error" className="text-4xl text-outline mb-3" />
+        <div className="font-headline text-lg text-primary mb-2">
+          Job not found
+        </div>
+        <Link
+          to="/admin/jobs"
+          className="inline-flex items-center gap-2 text-primary font-label text-sm"
+        >
+          <Icon name="arrow_back" /> Back to jobs
+        </Link>
       </div>
     );
   }
 
-  const toggleSub = (id: string) =>
-    setForm((f) => ({
-      ...f,
-      subcategoryIds: f.subcategoryIds.includes(id)
-        ? f.subcategoryIds.filter((x) => x !== id)
-        : [...f.subcategoryIds, id],
-    }));
-
   return (
-    <div className="px-10 py-10 max-w-4xl">
-      <Link
-        to="/admin/jobs"
-        className="inline-flex items-center gap-2 text-on-surface-variant hover:text-primary mb-6 font-label text-sm"
-      >
-        <Icon name="arrow_back" className="text-base" /> Back to jobs
-      </Link>
-      <h1 className="font-headline text-3xl font-bold text-primary mb-8 tracking-tighter">
-        {isEditing ? "Edit Job" : "New Job"}
-      </h1>
-
-      <form onSubmit={onSubmit} className="space-y-6">
-        <Field label="Title">
-          <Input
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            required
-          />
-        </Field>
-
-        <div className="grid md:grid-cols-2 gap-6">
-          <Field
-            label="Company"
-            help={
-              (companies ?? []).length === 0
-                ? "No companies yet — add one in Companies."
-                : undefined
-            }
-          >
-            <Select
-              value={form.companyId}
-              onValueChange={(v) => setForm({ ...form, companyId: v })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Pick a company" />
-              </SelectTrigger>
-              <SelectContent>
-                {(companies ?? []).map((c) => (
-                  <SelectItem key={c._id} value={c._id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+    <div className="max-w-screen-lg mx-auto px-4 sm:px-6 md:px-8 py-6 sm:py-10 md:py-14">
+      <PageHeader
+        eyebrow={
+          <span className="inline-flex items-center gap-2">
             <Link
-              to="/admin/companies/new"
-              className="text-xs text-primary font-label hover:underline"
+              to="/admin"
+              className="hover:text-primary transition-colors"
             >
-              + New company
+              Admin
             </Link>
-          </Field>
-          <Field label="Location">
-            <Input
-              value={form.location}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
-              required
-            />
-          </Field>
-        </div>
+            <span className="text-outline-variant/40">/</span>
+            <Link
+              to="/admin/jobs"
+              className="hover:text-primary transition-colors"
+            >
+              Jobs
+            </Link>
+            <span className="text-outline-variant/40">/</span>
+            {isEdit ? "Edit" : "Create"}
+          </span>
+        }
+        title={isEdit ? "Edit Job" : "Create Job"}
+      />
 
-        <div className="grid md:grid-cols-3 gap-6">
-          <Field label="Work mode">
-            <Select
-              value={form.workMode}
-              onValueChange={(v) =>
-                setForm({ ...form, workMode: v as WorkMode })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {WORK_MODES.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    {m}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Level">
-            <Select
-              value={form.level}
-              onValueChange={(v) => setForm({ ...form, level: v as Level })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LEVELS.map((l) => (
-                  <SelectItem key={l} value={l}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Status">
-            <Select
-              value={form.status}
-              onValueChange={(v) =>
-                setForm({ ...form, status: v as Status })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
+      <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+        {error && (
+          <div className="bg-red-400/10 border border-red-400/30 text-red-300 font-body text-sm px-4 py-3 rounded-lg flex items-center gap-2">
+            <Icon name="error" className="text-base" />
+            {error}
+          </div>
+        )}
 
-        <Field label="Category">
-          <Select
-            value={form.categoryId}
-            onValueChange={(v) => setForm({ ...form, categoryId: v })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Pick a category" />
-            </SelectTrigger>
-            <SelectContent>
-              {(categories ?? []).map((c) => (
-                <SelectItem key={c._id} value={c._id}>
+        {/* Title */}
+        <FormGroup label="Job Title" required>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Frontend Developer"
+            className="form-input"
+          />
+        </FormGroup>
+
+        {/* Company + Category row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          <FormGroup label="Company" required>
+            <select
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              className="form-input"
+            >
+              <option value="">Select company</option>
+              {(companies ?? []).map((c) => (
+                <option key={c._id} value={c._id}>
                   {c.name}
-                </SelectItem>
+                </option>
               ))}
-            </SelectContent>
-          </Select>
-        </Field>
+            </select>
+          </FormGroup>
 
-        {filteredSubs.length > 0 ? (
-          <Field
-            label="Sub-categories (tags)"
-            help="Curated taxonomy — multi-select."
-          >
+          <FormGroup label="Category" required>
+            <select
+              value={categoryId}
+              onChange={(e) => {
+                setCategoryId(e.target.value);
+                setSelectedSubcategoryIds([]);
+              }}
+              className="form-input"
+            >
+              <option value="">Select category</option>
+              {(categories ?? []).map((c) => (
+                <option key={c._id} value={c._id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </FormGroup>
+        </div>
+
+        {/* Subcategories */}
+        {filteredSubs.length > 0 && (
+          <FormGroup label="Subcategories">
             <div className="flex flex-wrap gap-2">
               {filteredSubs.map((s) => {
-                const checked = form.subcategoryIds.includes(
-                  s._id as unknown as string,
-                );
+                const selected = selectedSubcategoryIds.includes(s._id);
                 return (
                   <button
                     key={s._id}
                     type="button"
-                    onClick={() => toggleSub(s._id as unknown as string)}
+                    onClick={() =>
+                      setSelectedSubcategoryIds((prev) =>
+                        selected
+                          ? prev.filter((id) => id !== s._id)
+                          : [...prev, s._id],
+                      )
+                    }
                     className={cn(
-                      "px-3 py-1.5 rounded-full text-sm font-label border transition-colors",
-                      checked
+                      "px-3 py-1.5 rounded-full text-xs font-label border transition-colors",
+                      selected
                         ? "bg-primary text-on-primary border-primary"
-                        : "border-outline text-on-surface-variant hover:bg-surface-container",
+                        : "border-outline-variant/30 text-on-surface-variant hover:bg-surface-container-high",
                     )}
                   >
                     {s.name}
@@ -360,94 +276,237 @@ export function AdminJobForm() {
                 );
               })}
             </div>
-          </Field>
-        ) : null}
+          </FormGroup>
+        )}
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <Field label="Skills (comma separated)">
-            <Input
-              value={form.skills}
-              onChange={(e) => setForm({ ...form, skills: e.target.value })}
-              placeholder="C++, Avionics"
+        {/* Location + Work Mode */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          <FormGroup label="Location" required>
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Bangalore, India"
+              className="form-input"
             />
-          </Field>
-          <Field label="Tags (free-form, comma separated)">
-            <Input
-              value={form.tags}
-              onChange={(e) => setForm({ ...form, tags: e.target.value })}
-              placeholder="featured, new"
-            />
-          </Field>
+          </FormGroup>
+
+          <FormGroup label="Work Mode" required>
+            <div className="flex gap-2">
+              {WORK_MODES.map((wm) => (
+                <button
+                  key={wm.value}
+                  type="button"
+                  onClick={() => setWorkMode(wm.value)}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border text-xs font-label transition-colors",
+                    workMode === wm.value
+                      ? "bg-primary text-on-primary border-primary"
+                      : "border-outline-variant/30 text-on-surface-variant hover:bg-surface-container-high",
+                  )}
+                >
+                  <Icon name={wm.icon} className="text-sm" />
+                  {wm.label}
+                </button>
+              ))}
+            </div>
+          </FormGroup>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <Field
-            label="Unlock price (USD cents / paise)"
-            help="Default 900 = $9"
-          >
-            <Input
+        {/* Level + Unlock Price */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          <FormGroup label="Experience Level" required>
+            <select
+              value={level}
+              onChange={(e) => setLevel(e.target.value as Level)}
+              className="form-input"
+            >
+              {LEVELS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </FormGroup>
+
+          <FormGroup label="Unlock Price (₹)" required>
+            <input
               type="number"
-              min={0}
-              step={100}
-              value={form.unlockPricePaise}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  unlockPricePaise: Number(e.target.value) || 0,
-                })
-              }
+              value={unlockPrice}
+              onChange={(e) => setUnlockPrice(e.target.value)}
+              placeholder="9"
+              min="0"
+              step="1"
+              className="form-input"
             />
-          </Field>
-          <Field label="Apply URL">
-            <Input
-              type="url"
-              value={form.applyUrl}
-              onChange={(e) => setForm({ ...form, applyUrl: e.target.value })}
-              placeholder="https://company.com/careers/role"
-              required
-            />
-          </Field>
+          </FormGroup>
         </div>
 
-        <Field label="Description (markdown)">
-          <Textarea
-            rows={10}
-            value={form.descriptionMd}
-            onChange={(e) =>
-              setForm({ ...form, descriptionMd: e.target.value })
-            }
-          />
-        </Field>
+        {/* Skills + Tags */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          <FormGroup label="Skills" required hint="Comma-separated">
+            <input
+              type="text"
+              value={skillsInput}
+              onChange={(e) => setSkillsInput(e.target.value)}
+              placeholder="React, TypeScript, Node.js"
+              className="form-input"
+            />
+            {skillsInput && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {skillsInput
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map((s) => (
+                    <span
+                      key={s}
+                      className="bg-surface-container-high text-on-surface font-label text-[10px] px-2 py-0.5 rounded-md border border-outline-variant/30"
+                    >
+                      {s}
+                    </span>
+                  ))}
+              </div>
+            )}
+          </FormGroup>
 
-        <div className="flex justify-end gap-3 pt-4">
-          <Button asChild variant="ghost" type="button">
-            <Link to="/admin/jobs">Cancel</Link>
-          </Button>
-          <Button type="submit" disabled={saving}>
-            {saving ? "Saving…" : isEditing ? "Save Changes" : "Create Job"}
-          </Button>
+          <FormGroup label="Tags" hint="Comma-separated (optional)">
+            <input
+              type="text"
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+              placeholder="new, urgent, featured"
+              className="form-input"
+            />
+          </FormGroup>
+        </div>
+
+        {/* Salary (optional) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          <FormGroup label="Salary Min (₹, optional)">
+            <input
+              type="number"
+              value={salaryMin}
+              onChange={(e) => setSalaryMin(e.target.value)}
+              placeholder="e.g. 25000"
+              min="0"
+              className="form-input"
+            />
+          </FormGroup>
+          <FormGroup label="Salary Max (₹, optional)">
+            <input
+              type="number"
+              value={salaryMax}
+              onChange={(e) => setSalaryMax(e.target.value)}
+              placeholder="e.g. 50000"
+              min="0"
+              className="form-input"
+            />
+          </FormGroup>
+        </div>
+
+        {/* Apply URL */}
+        <FormGroup label="Apply URL" required>
+          <input
+            type="url"
+            value={applyUrl}
+            onChange={(e) => setApplyUrl(e.target.value)}
+            placeholder="https://company.com/careers/apply"
+            className="form-input"
+          />
+        </FormGroup>
+
+        {/* Description */}
+        <FormGroup label="Job Description" required hint="Markdown supported">
+          <textarea
+            value={descriptionMd}
+            onChange={(e) => setDescriptionMd(e.target.value)}
+            placeholder="Describe the role, responsibilities, qualifications..."
+            rows={8}
+            className="form-input resize-y min-h-[120px]"
+          />
+        </FormGroup>
+
+        {/* Status */}
+        <FormGroup label="Status" required>
+          <div className="flex gap-3">
+            {(["draft", "published"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatus(s)}
+                className={cn(
+                  "flex-1 sm:flex-none px-5 py-2.5 rounded-lg border font-label text-sm transition-colors",
+                  status === s
+                    ? s === "published"
+                      ? "bg-primary text-on-primary border-primary"
+                      : "bg-surface-container-high text-primary border-primary/30"
+                    : "border-outline-variant/30 text-on-surface-variant hover:bg-surface-container-high",
+                )}
+              >
+                {s === "draft" ? "Save as Draft" : "Publish"}
+              </button>
+            ))}
+          </div>
+        </FormGroup>
+
+        {/* Actions */}
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-4 border-t border-outline-variant/15">
+          <Link
+            to="/admin/jobs"
+            className="w-full sm:w-auto text-center border border-outline-variant/30 text-on-surface font-headline px-6 py-3 rounded-lg hover:bg-surface-container-low transition-colors"
+          >
+            Cancel
+          </Link>
+          <button
+            type="submit"
+            disabled={saving}
+            className={cn(
+              "w-full sm:w-auto bg-primary text-on-primary font-headline font-semibold px-8 py-3 rounded-lg hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2",
+              saving && "opacity-60 cursor-not-allowed",
+            )}
+          >
+            {saving ? (
+              <>
+                <span className="w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Icon name={isEdit ? "save" : "add"} />
+                {isEdit ? "Update Job" : "Create Job"}
+              </>
+            )}
+          </button>
         </div>
       </form>
     </div>
   );
 }
 
-function Field({
+function FormGroup({
   label,
-  help,
+  required,
+  hint,
   children,
 }: {
   label: string;
-  help?: string;
+  required?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
+    <div>
+      <label className="block font-label text-xs uppercase tracking-[0.2em] text-on-surface-variant mb-2">
+        {label}
+        {required && <span className="text-primary ml-1">*</span>}
+        {hint && (
+          <span className="normal-case tracking-normal text-outline-variant ml-2 font-body">
+            ({hint})
+          </span>
+        )}
+      </label>
       {children}
-      {help ? (
-        <div className="text-xs text-outline font-label">{help}</div>
-      ) : null}
     </div>
   );
 }
