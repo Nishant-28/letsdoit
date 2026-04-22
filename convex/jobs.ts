@@ -1,5 +1,11 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
 import {
   jobLevel,
   jobStatus,
@@ -138,6 +144,34 @@ export const getById = query({
   },
 });
 
+/**
+ * Internal lookup for the Cashfree create-order action. Returns the
+ * authoritative unlock price and publish status so the Node action
+ * never trusts client-supplied price input.
+ */
+export const internalGetForPurchase = internalQuery({
+  args: { id: v.id("jobs") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id("jobs"),
+      title: v.string(),
+      unlockPricePaise: v.number(),
+      status: jobStatus,
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.id);
+    if (!job) return null;
+    return {
+      _id: job._id,
+      title: job.title,
+      unlockPricePaise: job.unlockPricePaise,
+      status: job.status,
+    };
+  },
+});
+
 function toAdminJob(
   j: import("./_generated/dataModel").Doc<"jobs">,
   company: import("./_generated/dataModel").Doc<"companies"> | null,
@@ -242,6 +276,11 @@ export const adminArchive = mutation({
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
     await ctx.db.patch(args.id, { status: "archived" });
+    // Per-job unlocks are scoped to the job's lifecycle: archiving a
+    // job invalidates every active unlock for that job.
+    await ctx.runMutation(internal.entitlements.expireUnlocksForJob, {
+      jobId: args.id,
+    });
     return null;
   },
 });
@@ -321,13 +360,14 @@ export const seedSampleData = mutation({
     }
 
     const seedPlans: Array<{
-      slug: "weekly" | "monthly" | "yearly";
+      slug: "weekly" | "monthly" | "quarterly" | "yearly";
       pricePaise: number;
       periodDays: number;
       label: string;
     }> = [
       { slug: "weekly", pricePaise: 1900, periodDays: 7, label: "Weekly Pass" },
       { slug: "monthly", pricePaise: 4900, periodDays: 30, label: "Monthly Pass" },
+      { slug: "quarterly", pricePaise: 12900, periodDays: 90, label: "Quarterly Pass" },
       { slug: "yearly", pricePaise: 29900, periodDays: 365, label: "Yearly Pass" },
     ];
     for (const p of seedPlans) {
@@ -489,6 +529,9 @@ export const autoArchiveStale = internalMutation({
     for (const job of stale) {
       if (job.postedAt < cutoff) {
         await ctx.db.patch(job._id, { status: "archived" });
+        await ctx.runMutation(internal.entitlements.expireUnlocksForJob, {
+          jobId: job._id,
+        });
         archived++;
       }
     }

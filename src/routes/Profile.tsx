@@ -183,7 +183,7 @@ export function Profile() {
               <Field
                 label="Full name"
                 htmlFor="profile-name"
-                hint="Shown on applications and recruiter outreach."
+                // hint="Shown on applications and recruiter outreach."
               >
                 <input
                   id="profile-name"
@@ -207,36 +207,14 @@ export function Profile() {
               </Field>
             </SettingsCard>
 
+{/* Contact Details */}
             <SettingsCard
-              title="Your intent"
-              description="We tune Explore, alerts, and pricing around this. Switch any time."
-            >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <IntentTile
-                  active={intent === "candidate"}
-                  onClick={() => setIntent("candidate")}
-                  icon="person_search"
-                  title="Candidate"
-                  body="Discover and apply to roles."
-                />
-                <IntentTile
-                  active={intent === "recruiter"}
-                  onClick={() => setIntent("recruiter")}
-                  icon="campaign"
-                  title="Recruiter"
-                  body="Post, source, and track."
-                />
-              </div>
-            </SettingsCard>
-
-            <SettingsCard
-              title="Contact"
-              description="India-only for now (+91). Used for account recovery and critical alerts."
+              title=""
+              description=""
             >
               <Field
                 label="Mobile number"
                 htmlFor="profile-phone"
-                hint="Format: +91XXXXXXXXXX. We never share your number."
               >
                 <div className="mt-2 flex items-stretch rounded-lg border border-outline-variant/25 bg-surface-container-lowest focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20 transition-colors overflow-hidden">
                   <span className="px-4 flex items-center font-headline text-sm font-semibold text-on-surface border-r border-outline-variant/25 bg-surface-container">
@@ -311,67 +289,6 @@ export function Profile() {
                   Revert
                 </button>
               </div>
-            </div>
-
-            {!admin ? (
-              <div className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-6">
-                <div className="font-label text-[10px] uppercase tracking-[0.28em] text-outline-variant mb-2">
-                  Administrator access
-                </div>
-                <p className="font-body text-xs text-on-surface-variant mb-4">
-                  Use <code className="text-[11px] bg-surface-container px-1 rounded">{DEFAULT_ADMIN_CODE}</code>{" "}
-                  or your optional Convex <code className="text-[11px] bg-surface-container px-1 rounded">ADMIN_SIGNUP_SECRET</code>.
-                </p>
-                {claimError ? (
-                  <p className="text-sm text-error mb-2">{claimError}</p>
-                ) : null}
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={claimCode}
-                  onChange={(e) => setClaimCode(e.target.value)}
-                  placeholder={DEFAULT_ADMIN_CODE}
-                  className="w-full bg-surface-container-lowest border border-outline-variant/25 rounded-lg px-3 py-2 font-body text-sm text-on-surface mb-3 focus:outline-none focus:border-primary/60"
-                />
-                <button
-                  type="button"
-                  onClick={onClaimAdmin}
-                  disabled={claiming}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-primary text-on-primary font-headline text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-primary-container transition-colors disabled:opacity-70"
-                >
-                  {claiming ? "Checking…" : "Become administrator"}
-                </button>
-              </div>
-            ) : null}
-
-            <div className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-6">
-              <div className="font-label text-[10px] uppercase tracking-[0.28em] text-outline-variant mb-4">
-                Session
-              </div>
-              <button
-                type="button"
-                onClick={onSignOut}
-                className="w-full inline-flex items-center justify-between gap-2 rounded-lg border border-outline-variant/25 bg-surface-container-lowest hover:bg-surface-container-low px-4 py-3 transition-colors"
-              >
-                <span className="flex items-center gap-3">
-                  <Icon
-                    name="logout"
-                    className="text-lg text-on-surface-variant"
-                  />
-                  <span>
-                    <span className="font-headline text-sm font-semibold text-primary block">
-                      Sign out
-                    </span>
-                    <span className="font-body text-xs text-on-surface-variant">
-                      End this session on this device
-                    </span>
-                  </span>
-                </span>
-                <Icon
-                  name="arrow_forward"
-                  className="text-base text-outline-variant"
-                />
-              </button>
             </div>
           </aside>
         </div>

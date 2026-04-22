@@ -8,6 +8,8 @@ import { api } from "../convex/_generated/api";
 import { Explore } from "./routes/Explore";
 import { JobDetail } from "./routes/JobDetail";
 import { Pricing } from "./routes/Pricing";
+import { PaymentReturn } from "./routes/PaymentReturn";
+import { Billing } from "./routes/Billing";
 import { SiteShell } from "./components/SiteShell";
 import { RequireAuth } from "./components/auth/RequireAuth";
 import { RequireAdmin } from "./components/auth/RequireAdmin";
@@ -24,6 +26,7 @@ import { AdminCompanies } from "./routes/admin/AdminCompanies";
 import { AdminCompanyForm } from "./routes/admin/AdminCompanyForm";
 import { AdminCategories } from "./routes/admin/AdminCategories";
 import { AdminUsers } from "./routes/admin/AdminUsers";
+import { AdminPayments } from "./routes/admin/AdminPayments";
 
 const WORKOS_CLIENT_ID = process.env.VITE_WORKOS_CLIENT_ID ?? "";
 const WORKOS_REDIRECT_URI = process.env.VITE_WORKOS_REDIRECT_URI ?? "";
@@ -78,6 +81,11 @@ export function App() {
               <Route path="jobs/:id" element={<JobDetail />} />
               <Route path="pricing" element={<Pricing />} />
 
+              {/* Payment landing page — users hit this after Cashfree
+                  checkout. Public because the user may not have fully
+                  resumed their session yet after redirect. */}
+              <Route path="payment/return" element={<PaymentReturn />} />
+
               {/* Authenticated routes */}
               <Route
                 path="app"
@@ -92,6 +100,14 @@ export function App() {
                 element={
                   <RequireAuth>
                     <Profile />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="billing"
+                element={
+                  <RequireAuth>
+                    <Billing />
                   </RequireAuth>
                 }
               />
@@ -166,6 +182,14 @@ export function App() {
                 element={
                   <RequireAdmin>
                     <AdminUsers />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="admin/payments"
+                element={
+                  <RequireAdmin>
+                    <AdminPayments />
                   </RequireAdmin>
                 }
               />

@@ -46,6 +46,12 @@ export const adminStats = query({
     roleUnlocks: v.number(),
     companies: v.number(),
     categories: v.number(),
+    payments: v.object({
+      paid: v.number(),
+      pending: v.number(),
+      failed: v.number(),
+      revenuePaiseLast30d: v.number(),
+    }),
     activity24h: v.object({
       views: v.number(),
       unlocks: v.number(),
@@ -146,6 +152,35 @@ export const adminStats = query({
     const companies = (await ctx.db.query("companies").collect()).length;
     const categories = (await ctx.db.query("categories").collect()).length;
 
+    // Payments -------------------------------------------------------
+    // Read by status via index to keep the scan narrow. Revenue is
+    // computed from "paid" rows only, within the last 30 days.
+    const payments = { paid: 0, pending: 0, failed: 0, revenuePaiseLast30d: 0 };
+    const paidRows = await ctx.db
+      .query("paymentOrders")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "paid"))
+      .collect();
+    payments.paid = paidRows.length;
+    for (const row of paidRows) {
+      if (now > 0 && row.createdAt >= month) {
+        payments.revenuePaiseLast30d += row.amountPaise;
+      }
+    }
+    const pendingRows = await ctx.db
+      .query("paymentOrders")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "payment_pending"))
+      .collect();
+    const createdRows = await ctx.db
+      .query("paymentOrders")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "created"))
+      .collect();
+    payments.pending = pendingRows.length + createdRows.length;
+    const failedRows = await ctx.db
+      .query("paymentOrders")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
+      .collect();
+    payments.failed = failedRows.length;
+
     return {
       users: {
         total: allUsers.length,
@@ -170,6 +205,7 @@ export const adminStats = query({
       roleUnlocks,
       companies,
       categories,
+      payments,
       activity24h,
       recentJobs,
     };

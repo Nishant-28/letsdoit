@@ -69,7 +69,9 @@ export async function requireAdmin(
 /**
  * True iff the user currently holds access to `jobId` — either a per-role
  * unlock OR any active subscription. Queries trust the `status` field;
- * a nightly cron flips expired rows (see `convex/crons.ts`).
+ * the nightly cron in `convex/crons.ts` flips expired rows so we do not
+ * read `Date.now()` here (that would poison query caching; see
+ * `rules/no-date-now-in-queries.mdc`).
  */
 export async function hasAccess(
   ctx: QueryCtx | MutationCtx,

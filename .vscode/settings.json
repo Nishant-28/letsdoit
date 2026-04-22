@@ -1,2 +1,22 @@
 {
-}
+    "mcp": {
+      "inputs": [],
+      "servers": {
+        "cashfree": {
+          "command": "node",
+          "args": ["/path/to/cashfree-mcp/src/index.js"],
+          "env": {
+            "PAYMENTS_APP_ID": "YOUR_PG_CLIENT_ID",
+            "PAYMENTS_APP_SECRET": "YOUR_PG_CLIENT_SECRET",
+            "PAYOUTS_APP_ID": "YOUR_PAYOUTS_CLIENT_ID",
+            "PAYOUTS_APP_SECRET": "YOUR_PAYOUTS_CLIENT_SECRET",
+            "TWO_FA_PUBLIC_KEY_PEM_PATH": "/path/to/public_key.pem",
+            "SECUREID_APP_ID": "YOUR_SECUREID_CLIENT_ID",
+            "SECUREID_APP_SECRET": "YOUR_SECUREID_CLIENT_SECRET",
+            "TOOLS": "pg",
+            "ENV": "sandbox"
+          }
+        }
+      }
+    }
+  }

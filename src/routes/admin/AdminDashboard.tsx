@@ -105,11 +105,11 @@ export function AdminDashboard() {
               hint={`${stats.applications.active} active · ${stats.applications.last7d} this week`}
             />
             <StatCard
-              icon="diamond"
-              label="Active subs"
-              value={stats.subscriptions.active}
-              hint={`${stats.subscriptions.canceled} canceled · ${stats.roleUnlocks} role unlocks`}
-              tone={stats.subscriptions.active > 0 ? "accent" : "default"}
+              icon="payments"
+              label="Revenue (30d)"
+              value={formatRupees(stats.payments.revenuePaiseLast30d)}
+              hint={`${stats.payments.paid} paid · ${stats.payments.pending} pending · ${stats.payments.failed} failed`}
+              tone={stats.payments.revenuePaiseLast30d > 0 ? "accent" : "default"}
             />
           </div>
         </section>
@@ -287,6 +287,13 @@ export function AdminDashboard() {
                     icon="group"
                     label="Users"
                     hint="View all platform users"
+                  />
+                </Link>
+                <Link to="/admin/payments">
+                  <ActionRow
+                    icon="receipt_long"
+                    label="Payments"
+                    hint="Orders, fulfillment, reconcile"
                   />
                 </Link>
                 <ActionRow
@@ -519,6 +526,16 @@ function ActionRow({
       ) : null}
     </div>
   );
+}
+
+function formatRupees(paise: number): string {
+  const rupees = paise / 100;
+  if (rupees >= 100000) {
+    // Indian lakh notation reads more naturally for larger revenue
+    // buckets than raw rupee totals.
+    return `₹${(rupees / 100000).toFixed(1)}L`;
+  }
+  return `₹${Math.round(rupees).toLocaleString("en-IN")}`;
 }
 
 function relativeTime(ts: number, now: number): string {

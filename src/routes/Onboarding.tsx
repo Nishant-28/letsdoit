@@ -384,7 +384,7 @@ function StepIntent({
           body="Curated opportunities, saved applications, and signal on what's worth your time."
           badge="Candidate"
         />
-        <IntentChoice
+        {/* <IntentChoice
           selected={!wantsAdmin && intent === "recruiter"}
           onClick={() => {
             setWantsAdmin(false);
@@ -394,7 +394,7 @@ function StepIntent({
           title="I'm hiring talent"
           body="Post roles, track applicants, and reach the right people through targeted channels."
           badge="Recruiter"
-        />
+        /> */}
         <IntentChoice
           selected={wantsAdmin}
           onClick={() => {

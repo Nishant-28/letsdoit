@@ -1,16 +1,18 @@
 import { v } from "convex/values";
 import {
   internalMutation,
+  internalQuery,
   mutation,
   query,
 } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import {
   entitlementKind,
   entitlementSource,
   entitlementStatus,
   planSlug,
 } from "./schema";
-import { maybeUser, requireUser } from "./helpers";
+import { maybeUser, requireAdmin, requireUser } from "./helpers";
 
 export const myAccess = query({
   args: {},
@@ -199,14 +201,26 @@ export const cancelSubscription = mutation({
 
 /**
  * Internal, invoked by the nightly cron defined in `convex/crons.ts`.
- * Flips active/canceled entitlements whose `expiresAt < now` to `expired`.
+ *
+ * Reconciles two sources of staleness:
+ *   1. Subscription/expired-by-time: any active or canceled entitlement
+ *      whose `expiresAt < now` flips to `expired`.
+ *   2. Job-unlock-by-archive: any active role entitlement whose job is
+ *      no longer published. Normally the `jobs.adminArchive` mutation
+ *      expires matching unlocks inline; this is belt-and-suspenders for
+ *      edge cases (direct patches, seeds, legacy rows).
  */
 export const expireDue = internalMutation({
   args: {},
-  returns: v.object({ expired: v.number() }),
+  returns: v.object({
+    expiredByTime: v.number(),
+    expiredByArchive: v.number(),
+  }),
   handler: async (ctx) => {
     const now = Date.now();
-    let expired = 0;
+    let expiredByTime = 0;
+    let expiredByArchive = 0;
+
     for (const status of ["active", "canceled"] as const) {
       const rows = await ctx.db
         .query("entitlements")
@@ -215,11 +229,25 @@ export const expireDue = internalMutation({
       for (const e of rows) {
         if (e.expiresAt && e.expiresAt < now) {
           await ctx.db.patch(e._id, { status: "expired" });
-          expired++;
+          expiredByTime++;
         }
       }
     }
-    return { expired };
+
+    const activeRoles = await ctx.db
+      .query("entitlements")
+      .withIndex("by_status_expiresAt", (q) => q.eq("status", "active"))
+      .collect();
+    for (const e of activeRoles) {
+      if (e.kind !== "role" || !e.jobId) continue;
+      const job = await ctx.db.get(e.jobId);
+      if (!job || job.status !== "published") {
+        await ctx.db.patch(e._id, { status: "expired" });
+        expiredByArchive++;
+      }
+    }
+
+    return { expiredByTime, expiredByArchive };
   },
 });
 
@@ -236,7 +264,12 @@ export const listPlans = query({
   ),
   handler: async (ctx) => {
     const plans = await ctx.db.query("plans").collect();
-    const order: Record<string, number> = { weekly: 0, monthly: 1, yearly: 2 };
+    const order: Record<string, number> = {
+      weekly: 0,
+      monthly: 1,
+      quarterly: 2,
+      yearly: 3,
+    };
     return plans
       .map((p) => ({
         _id: p._id,
@@ -246,5 +279,219 @@ export const listPlans = query({
         label: p.label,
       }))
       .sort((a, b) => (order[a.slug] ?? 99) - (order[b.slug] ?? 99));
+  },
+});
+
+/**
+ * Internal query used by the Cashfree Node action to look up a plan's
+ * price + duration in paise at order-creation time. The action computes
+ * the payable amount from this value, never from client input.
+ */
+export const getPlanBySlug = internalQuery({
+  args: { slug: planSlug },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id("plans"),
+      slug: planSlug,
+      pricePaise: v.number(),
+      periodDays: v.number(),
+      label: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .unique();
+    if (!plan) return null;
+    return {
+      _id: plan._id,
+      slug: plan.slug,
+      pricePaise: plan.pricePaise,
+      periodDays: plan.periodDays,
+      label: plan.label,
+    };
+  },
+});
+
+/**
+ * Internal fulfillment mutation invoked by the Cashfree webhook after
+ * signature verification. Idempotent: if the matching entitlement
+ * already exists for this order, return the existing id without
+ * inserting a second row.
+ *
+ * The entitlement shape depends on the order:
+ *   - `subscription`: `kind: subscription`, `planSlug`, `expiresAt` =
+ *     now + periodDays.
+ *   - `job_unlock`: `kind: role`, `jobId`, no `expiresAt` — the unlock
+ *     stays valid until the job itself is archived (see jobs.ts).
+ */
+export const fulfillOrderEntitlement = internalMutation({
+  args: {
+    orderId: v.id("paymentOrders"),
+  },
+  returns: v.union(v.null(), v.id("entitlements")),
+  handler: async (ctx, args) => {
+    const order = await ctx.db.get(args.orderId);
+    if (!order) return null;
+    if (order.entitlementId) {
+      return order.entitlementId;
+    }
+
+    const now = Date.now();
+
+    if (order.productType === "subscription") {
+      if (!order.planSlug) {
+        throw new Error("Subscription order missing planSlug.");
+      }
+      const plan = await ctx.db
+        .query("plans")
+        .withIndex("by_slug", (q) => q.eq("slug", order.planSlug!))
+        .unique();
+      if (!plan) {
+        throw new Error(`Unknown plan: ${order.planSlug}`);
+      }
+      const expiresAt = now + plan.periodDays * 24 * 60 * 60 * 1000;
+      const entId = await ctx.db.insert("entitlements", {
+        userId: order.userId,
+        kind: "subscription",
+        planSlug: order.planSlug,
+        startsAt: now,
+        expiresAt,
+        source: "cashfree",
+        status: "active",
+      });
+      return entId;
+    }
+
+    if (order.productType === "job_unlock") {
+      if (!order.jobId) {
+        throw new Error("Job unlock order missing jobId.");
+      }
+      const job = await ctx.db.get(order.jobId);
+      if (!job) {
+        throw new Error("Job not found for unlock.");
+      }
+      // Idempotency: if user already has an active unlock on this job,
+      // reuse it rather than creating a duplicate entitlement row.
+      const existingActive = await ctx.db
+        .query("entitlements")
+        .withIndex("by_user_job", (q) =>
+          q.eq("userId", order.userId).eq("jobId", order.jobId!),
+        )
+        .filter((q) => q.eq(q.field("status"), "active"))
+        .first();
+      if (existingActive) {
+        return existingActive._id;
+      }
+      const entId = await ctx.db.insert("entitlements", {
+        userId: order.userId,
+        kind: "role",
+        jobId: order.jobId,
+        startsAt: now,
+        source: "cashfree",
+        status: "active",
+      });
+      await ctx.db.insert("jobEvents", {
+        jobId: order.jobId,
+        userId: order.userId,
+        kind: "unlock",
+        at: now,
+      });
+      return entId;
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Internal: mark every active per-job unlock for a given job as expired.
+ * Called from `jobs.adminArchive` and `jobs.autoArchiveStale` so access
+ * stops when the job itself is no longer live.
+ */
+export const expireUnlocksForJob = internalMutation({
+  args: { jobId: v.id("jobs") },
+  returns: v.object({ expired: v.number() }),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("entitlements")
+      .filter((q) => q.eq(q.field("jobId"), args.jobId))
+      .collect();
+    let expired = 0;
+    for (const r of rows) {
+      if (r.kind === "role" && r.status === "active") {
+        await ctx.db.patch(r._id, { status: "expired" });
+        expired++;
+      }
+    }
+    return { expired };
+  },
+});
+
+/**
+ * Admin-only manual grant. Used for support cases (e.g. recovering
+ * access after a failed webhook, comps, promotions).
+ */
+export const adminGrant = mutation({
+  args: {
+    userId: v.id("users"),
+    productType: v.union(
+      v.literal("subscription"),
+      v.literal("job_unlock"),
+    ),
+    planSlug: v.optional(planSlug),
+    jobId: v.optional(v.id("jobs")),
+  },
+  returns: v.id("entitlements"),
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const now = Date.now();
+
+    if (args.productType === "subscription") {
+      if (!args.planSlug) throw new Error("planSlug is required.");
+      const plan = await ctx.db
+        .query("plans")
+        .withIndex("by_slug", (q) => q.eq("slug", args.planSlug!))
+        .unique();
+      if (!plan) throw new Error(`Unknown plan: ${args.planSlug}`);
+      return await ctx.db.insert("entitlements", {
+        userId: args.userId,
+        kind: "subscription",
+        planSlug: args.planSlug,
+        startsAt: now,
+        expiresAt: now + plan.periodDays * 24 * 60 * 60 * 1000,
+        source: "admin",
+        status: "active",
+      });
+    }
+
+    if (!args.jobId) throw new Error("jobId is required.");
+    const job = await ctx.db.get(args.jobId);
+    if (!job) throw new Error("Job not found.");
+    const existing = await ctx.db
+      .query("entitlements")
+      .withIndex("by_user_job", (q) =>
+        q.eq("userId", args.userId).eq("jobId", args.jobId!),
+      )
+      .filter((q) => q.eq(q.field("status"), "active"))
+      .first();
+    if (existing) return existing._id;
+    const entId: Id<"entitlements"> = await ctx.db.insert("entitlements", {
+      userId: args.userId,
+      kind: "role",
+      jobId: args.jobId,
+      startsAt: now,
+      source: "admin",
+      status: "active",
+    });
+    await ctx.db.insert("jobEvents", {
+      jobId: args.jobId,
+      userId: args.userId,
+      kind: "unlock",
+      at: now,
+    });
+    return entId;
   },
 });

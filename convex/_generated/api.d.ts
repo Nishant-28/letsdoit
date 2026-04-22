@@ -19,6 +19,7 @@ import type * as http from "../http.js";
 import type * as jobEvents from "../jobEvents.js";
 import type * as jobs from "../jobs.js";
 import type * as migrate from "../migrate.js";
+import type * as paymentOrders from "../paymentOrders.js";
 import type * as payments from "../payments.js";
 import type * as savedJobs from "../savedJobs.js";
 import type * as subcategories from "../subcategories.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   jobEvents: typeof jobEvents;
   jobs: typeof jobs;
   migrate: typeof migrate;
+  paymentOrders: typeof paymentOrders;
   payments: typeof payments;
   savedJobs: typeof savedJobs;
   subcategories: typeof subcategories;

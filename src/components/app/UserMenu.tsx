@@ -114,6 +114,12 @@ export function UserMenu() {
             label="Account & settings"
             onNavigate={() => setOpen(false)}
           />
+          <MenuItem
+            to="/billing"
+            icon="receipt_long"
+            label="Billing & orders"
+            onNavigate={() => setOpen(false)}
+          />
           {admin ? (
             <MenuItem
               to="/admin"

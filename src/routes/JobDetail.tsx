@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
-import { Link, useParams } from "react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Icon } from "@/components/Icon";
+import { startCashfreeCheckout } from "@/lib/cashfree";
 import { trackEvent } from "@/lib/posthog";
 import { cn } from "@/lib/utils";
 
@@ -19,13 +20,18 @@ const levelLabel: Record<string, string> = {
 
 export function JobDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
 
+  const me = useQuery(api.users.me, {});
   const job = useQuery(
     api.jobs.getById,
     id ? { id: id as Id<"jobs"> } : "skip",
   );
   const recordView = useMutation(api.jobEvents.recordView);
-  const unlock = useMutation(api.entitlements.mockUnlockJob);
+  const createOrder = useAction(api.payments.createOrder);
+
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   const viewedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -82,14 +88,39 @@ export function JobDetail() {
   const unlocked = job.unlocked;
 
   const onUnlock = async () => {
-    if (!id) return;
+    if (!id || !job) return;
+    setCheckoutError(null);
+    if (!me) {
+      navigate(`/login?redirect=${encodeURIComponent(`/jobs/${id}`)}`);
+      return;
+    }
+    if (!me.onboarded) {
+      navigate("/onboarding");
+      return;
+    }
+    setStarting(true);
     try {
-      await unlock({ jobId: id as Id<"jobs"> });
-      trackEvent("job_unlocked", { job_id: id, title: job?.title });
-    } catch (e: any) {
-      if (e?.message?.includes("Not authenticated")) {
-        window.location.href = "/login";
+      trackEvent("job_unlock_checkout_started", {
+        job_id: id,
+        title: job.title,
+      });
+      const { paymentSessionId, cashfreeMode } = await createOrder({
+        productType: "job_unlock",
+        jobId: id as Id<"jobs">,
+      });
+      await startCashfreeCheckout({
+        paymentSessionId,
+        mode: cashfreeMode,
+      });
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "Could not start checkout.";
+      if (message.toLowerCase().includes("not authenticated")) {
+        navigate(`/login?redirect=${encodeURIComponent(`/jobs/${id}`)}`);
+        return;
       }
+      setCheckoutError(message);
+      setStarting(false);
     }
   };
 
@@ -197,10 +228,23 @@ export function JobDetail() {
               <button
                 type="button"
                 onClick={onUnlock}
-                className="w-full sm:w-auto bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2"
+                disabled={starting}
+                className="w-full sm:w-auto bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-md hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70"
               >
-                <Icon name="lock_open" />
-                Unlock for ₹{(job.unlockPricePaise / 100).toFixed(0)}
+                {starting ? (
+                  <>
+                    <span className="relative w-4 h-4">
+                      <span className="absolute inset-0 rounded-full border border-on-primary/30" />
+                      <span className="absolute inset-0 rounded-full border-t border-on-primary animate-spin" />
+                    </span>
+                    Starting checkout
+                  </>
+                ) : (
+                  <>
+                    <Icon name="lock_open" />
+                    Unlock for ₹{(job.unlockPricePaise / 100).toFixed(0)}
+                  </>
+                )}
               </button>
               <Link
                 to="/pricing"
@@ -212,6 +256,12 @@ export function JobDetail() {
             </>
           )}
         </div>
+        {checkoutError ? (
+          <div className="rounded-lg border border-error/30 bg-error/10 px-4 py-3 text-sm text-error flex items-start gap-3">
+            <Icon name="error" className="text-base mt-0.5" />
+            <span>{checkoutError}</span>
+          </div>
+        ) : null}
       </header>
 
       {/* Description ------------------------------------------------ */}
@@ -228,6 +278,7 @@ export function JobDetail() {
         <LockedOverlay
           pricePaise={job.unlockPricePaise}
           onUnlock={onUnlock}
+          starting={starting}
         />
       )}
     </div>
@@ -237,9 +288,11 @@ export function JobDetail() {
 function LockedOverlay({
   pricePaise,
   onUnlock,
+  starting,
 }: {
   pricePaise: number;
   onUnlock: () => void;
+  starting: boolean;
 }) {
   return (
     <div className="relative">
@@ -274,10 +327,23 @@ function LockedOverlay({
             <button
               type="button"
               onClick={onUnlock}
-              className="w-full bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-lg hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2"
+              disabled={starting}
+              className="w-full bg-primary text-on-primary font-headline font-semibold px-6 py-3 rounded-lg hover:bg-primary-container transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-70"
             >
-              <Icon name="lock_open" />
-              Unlock for ₹{(pricePaise / 100).toFixed(0)}
+              {starting ? (
+                <>
+                  <span className="relative w-4 h-4">
+                    <span className="absolute inset-0 rounded-full border border-on-primary/30" />
+                    <span className="absolute inset-0 rounded-full border-t border-on-primary animate-spin" />
+                  </span>
+                  Starting checkout
+                </>
+              ) : (
+                <>
+                  <Icon name="lock_open" />
+                  Unlock for ₹{(pricePaise / 100).toFixed(0)}
+                </>
+              )}
             </button>
             <Link
               to="/pricing"

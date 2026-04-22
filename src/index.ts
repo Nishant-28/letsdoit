@@ -20,8 +20,15 @@ async function serveStatic(req: Request): Promise<Response> {
   // Serve index.html for root
   if (pathname === "/") {
     const indexPath = join(import.meta.dir, "index.html");
-    const fd = await file(indexPath).text();
-    return new Response(fd, {
+    let html = await file(indexPath).text();
+    // Dev server serves CSS at /frontend.css; omit from HTML so `bun run build` can bundle CSS.
+    if (process.env.NODE_ENV !== "production") {
+      html = html.replace(
+        "</head>",
+        '  <link rel="stylesheet" href="/frontend.css" />\n</head>'
+      );
+    }
+    return new Response(html, {
       headers: { "Content-Type": "text/html" },
     });
   }
@@ -122,10 +129,14 @@ const server = serve({
   port: 3000,
   async fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname === "/frontend.js" || url.pathname === "/frontend.css") {
+    if (
+      url.pathname === "/frontend.js" ||
+      url.pathname === "/frontend.tsx" ||
+      url.pathname === "/frontend.css"
+    ) {
       try {
         const bundle = await getFrontendBundle();
-        if (url.pathname === "/frontend.js") {
+        if (url.pathname === "/frontend.js" || url.pathname === "/frontend.tsx") {
           return new Response(bundle.js, {
             headers: { "Content-Type": "text/javascript;charset=utf-8" },
           });

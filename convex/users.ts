@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { internalQuery, query, mutation } from "./_generated/server";
 import { isOperatorEmail, maybeUser, requireUser } from "./helpers";
 import { userIntent, userRole } from "./schema";
 
@@ -21,6 +21,37 @@ export const me = query({
     const user = await maybeUser(ctx);
     if (!user) return null;
     return projectUser(user);
+  },
+});
+
+/**
+ * Internal lookup used by Node actions (e.g. Cashfree `createOrder`) to
+ * resolve the calling user's DB row. Node actions must go through
+ * `ctx.runQuery` to read the database, so this exposes the same
+ * `maybeUser` helper behind an internal boundary.
+ */
+export const internalGetMe = internalQuery({
+  args: {},
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id("users"),
+      email: v.string(),
+      name: v.string(),
+      phoneE164: v.optional(v.string()),
+      role: userRole,
+    }),
+  ),
+  handler: async (ctx) => {
+    const user = await maybeUser(ctx);
+    if (!user) return null;
+    return {
+      _id: user._id,
+      email: user.email,
+      name: user.name,
+      phoneE164: user.phoneE164,
+      role: user.role,
+    };
   },
 });
 

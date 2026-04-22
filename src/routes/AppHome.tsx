@@ -96,9 +96,9 @@ export function AppHome() {
             )
           }
           description={
-            user.intent === "recruiter"
+            /* user.intent === "recruiter"
               ? "Track the signal on the roles you're running, surface new candidates, and pick up where you left off."
-              : "Curated signal from the roles you've been eyeing, the sectors you care about, and what's fresh in the last 24 hours."
+              : */ "Curated signal from the roles you've been eyeing, the sectors you care about, and what's fresh in the last 24 hours."
           }
           actions={
             <>

@@ -31,6 +31,11 @@ export const jobStatus = v.union(
   v.literal("archived"),
 );
 
+/**
+ * `subscription` grants access to every published job while active.
+ * `role` is historical naming for per-job unlocks — the `jobId` field on
+ * the entitlement is the source of truth, not the literal string.
+ */
 export const entitlementKind = v.union(
   v.literal("subscription"),
   v.literal("role"),
@@ -39,6 +44,7 @@ export const entitlementKind = v.union(
 export const entitlementSource = v.union(
   v.literal("mock"),
   v.literal("cashfree"),
+  v.literal("admin"),
 );
 
 export const entitlementStatus = v.union(
@@ -51,8 +57,25 @@ export const entitlementStatus = v.union(
 export const planSlug = v.union(
   v.literal("weekly"),
   v.literal("monthly"),
+  v.literal("quarterly"),
   v.literal("yearly"),
 );
+
+export const paymentProductType = v.union(
+  v.literal("subscription"),
+  v.literal("job_unlock"),
+);
+
+export const paymentOrderStatus = v.union(
+  v.literal("created"),
+  v.literal("payment_pending"),
+  v.literal("paid"),
+  v.literal("failed"),
+  v.literal("canceled"),
+  v.literal("refunded"),
+);
+
+export const paymentProvider = v.literal("cashfree");
 
 export const applicationStatus = v.union(
   v.literal("saved"),
@@ -163,6 +186,39 @@ export default defineSchema({
     periodDays: v.number(),
     label: v.string(),
   }).index("by_slug", ["slug"]),
+
+  /**
+   * Durable record of a payment attempt. Created before we hand off to
+   * Cashfree checkout; mutated idempotently by webhook events. The
+   * entitlement is only granted after a verified `paid` transition, and
+   * `entitlementId` is backfilled at that point for reconciliation.
+   */
+  paymentOrders: defineTable({
+    userId: v.id("users"),
+    productType: paymentProductType,
+    planSlug: v.optional(planSlug),
+    jobId: v.optional(v.id("jobs")),
+    amountPaise: v.number(),
+    currency: v.string(),
+    provider: paymentProvider,
+    /** Our own opaque order id, also sent to Cashfree as `order_id`. */
+    providerOrderId: v.string(),
+    /** Cashfree's `payment_session_id`; powers hosted checkout redirect. */
+    paymentSessionId: v.optional(v.string()),
+    status: paymentOrderStatus,
+    createdAt: v.number(),
+    paidAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
+    entitlementId: v.optional(v.id("entitlements")),
+    /** Last webhook event type (e.g. PAYMENT_SUCCESS_WEBHOOK) for reconciliation. */
+    lastWebhookEventType: v.optional(v.string()),
+    lastWebhookAt: v.optional(v.number()),
+    returnUrl: v.optional(v.string()),
+  })
+    .index("by_providerOrderId", ["providerOrderId"])
+    .index("by_user_createdAt", ["userId", "createdAt"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
 
   jobEvents: defineTable({
     jobId: v.id("jobs"),
