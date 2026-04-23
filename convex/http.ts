@@ -1,5 +1,7 @@
 import { httpRouter } from "convex/server";
+import type { GenericActionCtx } from "convex/server";
 import { httpAction } from "./_generated/server";
+import type { DataModel } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import {
   buildAppPaymentReturnUrl,
@@ -9,9 +11,15 @@ import {
   extractPayuFailureReason,
   getPayuAdditionalCharges,
   getPayuConfig,
+  mergePayuVerifyWithCallback,
   parsePayuFormPayload,
   sha512Hex,
 } from "./payu";
+
+type HttpActionCtx = GenericActionCtx<DataModel>;
+
+/** After PayU POSTs to this endpoint, use 303 so the next hop is always GET (PRG). 302 can repeat POST to the app URL on some clients. */
+const PAYU_RETURN_REDIRECT_STATUS = 303;
 
 const http = httpRouter();
 
@@ -95,168 +103,6 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#039;");
 }
 
-http.route({
-  path: "/payu/return",
-  method: "GET",
-  handler: httpAction(async (_ctx, req) => {
-    const url = new URL(req.url);
-    const orderId =
-      url.searchParams.get("orderId")?.trim() ||
-      url.searchParams.get("txnid")?.trim();
-    if (!orderId) {
-      return new Response("Missing orderId", { status: 400 });
-    }
-    return Response.redirect(buildAppPaymentReturnUrl(orderId), 302);
-  }),
-});
-
-/**
- * PayU Hosted Checkout callback endpoint. PayU POSTs URL-encoded form
- * fields here after the customer completes, fails, or cancels the
- * hosted checkout flow. We verify the reverse hash, then settle the
- * local order server-side before redirecting the browser back into the
- * app.
- */
-http.route({
-  path: "/payu/return",
-  method: "POST",
-  handler: httpAction(async (ctx, req) => {
-    const rawBody = await req.text();
-    const payload = parsePayuFormPayload(rawBody);
-    const providerOrderId = payload.txnid?.trim();
-    if (!providerOrderId) {
-      return new Response("Missing txnid", { status: 400 });
-    }
-
-    const order = await ctx.runQuery(
-      internal.paymentOrders.getByProviderOrderId,
-      { providerOrderId },
-    );
-    if (!order) {
-      console.warn(`PayU callback: unknown txnid=${providerOrderId}`);
-      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
-    }
-
-    if (
-      !order.payuKey ||
-      !order.payuAmount ||
-      !order.payuProductInfo ||
-      !order.payuFirstname ||
-      !order.payuEmail
-    ) {
-      console.error(`PayU callback: order ${providerOrderId} is missing request snapshot fields.`);
-      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
-    }
-
-    const receivedHash = payload.hash?.trim().toLowerCase();
-    if (!receivedHash) {
-      return new Response("Missing hash", { status: 401 });
-    }
-
-    const config = getPayuConfig();
-    const expectedHash = await sha512Hex(
-      buildPayuResponseHashString(
-        {
-          key: order.payuKey,
-          txnid: order.providerOrderId,
-          amount: order.payuAmount,
-          productinfo: order.payuProductInfo,
-          firstname: order.payuFirstname,
-          email: order.payuEmail,
-          udf1: order.payuUdf1,
-          udf2: order.payuUdf2,
-          udf3: order.payuUdf3,
-          udf4: order.payuUdf4,
-          udf5: order.payuUdf5,
-          status: payload.status?.trim() ?? "",
-          splitInfo: payload.splitInfo?.trim() || undefined,
-          additionalCharges: getPayuAdditionalCharges(payload),
-        },
-        config.salt,
-      ),
-    );
-
-    if (expectedHash !== receivedHash) {
-      console.warn(`PayU callback: hash mismatch for ${providerOrderId}`);
-      return new Response("Invalid hash", { status: 401 });
-    }
-
-    const callbackOutcome = derivePayuOutcome(
-      payload.status,
-      payload.unmappedstatus,
-    );
-
-    let verified:
-      | {
-          outcome: "paid" | "payment_pending" | "failed" | "canceled" | null;
-          providerPaymentId?: string;
-          providerStatus?: string;
-          providerUnmappedStatus?: string;
-          failureReason?: string;
-        }
-      | null = null;
-
-    try {
-      verified = await verifyPayuPayment(providerOrderId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`PayU verify_payment failed for ${providerOrderId}: ${message}`);
-    }
-
-    const finalOutcome = verified
-      ? (verified.outcome ?? "payment_pending")
-      : callbackOutcome;
-    const providerPaymentId =
-      verified?.providerPaymentId ?? payload.mihpayid?.trim();
-    const providerStatus = verified?.providerStatus ?? payload.status?.trim();
-    const providerUnmappedStatus =
-      verified?.providerUnmappedStatus ?? payload.unmappedstatus?.trim();
-    const failureReason =
-      verified?.failureReason ?? extractPayuFailureReason(payload);
-
-    if (order.status === "paid" && finalOutcome !== "paid") {
-      return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
-    }
-
-    try {
-      if (finalOutcome === "paid") {
-        await ctx.runMutation(internal.paymentOrders.fulfillPaid, {
-          providerOrderId,
-          eventType: "PAYU_CALLBACK",
-          providerPaymentId,
-          providerStatus,
-          providerUnmappedStatus,
-        });
-      } else if (finalOutcome === "payment_pending") {
-        await ctx.runMutation(internal.paymentOrders.markPaymentPending, {
-          orderId: order._id,
-          eventType: "PAYU_CALLBACK",
-          providerPaymentId,
-          providerStatus,
-          providerUnmappedStatus,
-          reason: failureReason,
-        });
-      } else {
-        await ctx.runMutation(internal.paymentOrders.markFailed, {
-          orderId: order._id,
-          reason: failureReason,
-          eventType: "PAYU_CALLBACK",
-          status: finalOutcome,
-          providerPaymentId,
-          providerStatus,
-          providerUnmappedStatus,
-        });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`PayU settlement failed for ${providerOrderId}: ${msg}`);
-      return new Response("fulfillment error", { status: 500 });
-    }
-
-    return Response.redirect(buildAppPaymentReturnUrl(providerOrderId), 302);
-  }),
-});
-
 type PayuVerifyTransaction = {
   mihpayid?: string;
   status?: string;
@@ -273,11 +119,21 @@ type PayuVerifyResponse = {
   transaction_details?: Record<string, PayuVerifyTransaction | undefined>;
 };
 
+type PayuVerifyResult = {
+  outcome: "paid" | "payment_pending" | "failed" | "canceled" | null;
+  providerPaymentId?: string;
+  providerStatus?: string;
+  providerUnmappedStatus?: string;
+  failureReason?: string;
+};
+
 function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-async function verifyPayuPayment(providerOrderId: string) {
+async function verifyPayuPayment(
+  providerOrderId: string,
+): Promise<PayuVerifyResult> {
   const config = getPayuConfig();
   const command = "verify_payment";
   const verifyHash = await sha512Hex(
@@ -308,14 +164,14 @@ async function verifyPayuPayment(providerOrderId: string) {
   }
 
   const text = await response.text();
-  let payload: PayuVerifyResponse;
+  let parsed: PayuVerifyResponse;
   try {
-    payload = JSON.parse(text) as PayuVerifyResponse;
+    parsed = JSON.parse(text) as PayuVerifyResponse;
   } catch {
     throw new Error("PayU verify_payment returned non-JSON data.");
   }
 
-  const detail = payload.transaction_details?.[providerOrderId];
+  const detail = parsed.transaction_details?.[providerOrderId];
   const providerPaymentId = asNonEmptyString(detail?.mihpayid);
   const providerStatus = asNonEmptyString(detail?.status);
   const providerUnmappedStatus = asNonEmptyString(detail?.unmappedstatus);
@@ -326,7 +182,7 @@ async function verifyPayuPayment(providerOrderId: string) {
       providerPaymentId,
       providerStatus,
       providerUnmappedStatus,
-      failureReason: asNonEmptyString(payload.msg) ?? "Transaction not found in PayU.",
+      failureReason: asNonEmptyString(parsed.msg) ?? "Transaction not found in PayU.",
     };
   }
 
@@ -338,5 +194,302 @@ async function verifyPayuPayment(providerOrderId: string) {
     failureReason: extractPayuFailureReason(detail),
   };
 }
+
+/**
+ * URL-encoded form body or query string: verify reverse hash, merge with
+ * verify_payment, then fulfill. Used for PayU POST and for GET when the
+ * full form is on the query string.
+ */
+async function settlePayuFormBody(
+  ctx: HttpActionCtx,
+  rawBody: string,
+  eventType: "PAYU_CALLBACK" | "PAYU_GET_FORM",
+): Promise<Response> {
+  const payload = parsePayuFormPayload(rawBody);
+  const providerOrderId = payload.txnid?.trim();
+  if (!providerOrderId) {
+    return Response.redirect(
+      buildAppPaymentReturnUrl(undefined, { paymentError: "missing_txnid" }),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  const order = await ctx.runQuery(
+    internal.paymentOrders.getByProviderOrderId,
+    { providerOrderId },
+  );
+  if (!order) {
+    console.warn(`PayU callback: unknown txnid=${providerOrderId}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  if (
+    !order.payuKey ||
+    !order.payuAmount ||
+    !order.payuProductInfo ||
+    !order.payuFirstname ||
+    !order.payuEmail
+  ) {
+    console.error(
+      `PayU callback: order ${providerOrderId} is missing request snapshot fields.`,
+    );
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  const receivedHash = payload.hash?.trim().toLowerCase();
+  if (!receivedHash) {
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId, { paymentError: "missing_hash" }),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  const config = getPayuConfig();
+  const expectedHash = await sha512Hex(
+    buildPayuResponseHashString(
+      {
+        key: order.payuKey,
+        txnid: order.providerOrderId,
+        amount: payload.amount?.trim() ?? order.payuAmount,
+        productinfo: payload.productinfo?.trim() ?? order.payuProductInfo,
+        firstname: payload.firstname?.trim() ?? order.payuFirstname,
+        email: payload.email?.trim() ?? order.payuEmail,
+        udf1: payload.udf1?.trim() ?? order.payuUdf1,
+        udf2: payload.udf2?.trim() ?? order.payuUdf2,
+        udf3: payload.udf3?.trim() ?? order.payuUdf3,
+        udf4: payload.udf4?.trim() ?? order.payuUdf4,
+        udf5: payload.udf5?.trim() ?? order.payuUdf5,
+        status: payload.status?.trim() ?? "",
+        splitInfo: payload.splitInfo?.trim() || undefined,
+        additionalCharges: getPayuAdditionalCharges(payload),
+      },
+      config.salt,
+    ),
+  );
+
+  if (expectedHash !== receivedHash) {
+    console.warn(`PayU callback: hash mismatch for ${providerOrderId}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId, { paymentError: "invalid_hash" }),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  const callbackOutcome = derivePayuOutcome(
+    payload.status,
+    payload.unmappedstatus,
+  );
+
+  let verified: PayuVerifyResult | null = null;
+  try {
+    verified = await verifyPayuPayment(providerOrderId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`PayU verify_payment failed for ${providerOrderId}: ${message}`);
+  }
+
+  const finalOutcome = mergePayuVerifyWithCallback(callbackOutcome, verified);
+  const providerPaymentId =
+    verified?.providerPaymentId ?? payload.mihpayid?.trim();
+  const providerStatus = verified?.providerStatus ?? payload.status?.trim();
+  const providerUnmappedStatus =
+    verified?.providerUnmappedStatus ?? payload.unmappedstatus?.trim();
+  const failureReason =
+    verified?.failureReason ?? extractPayuFailureReason(payload);
+
+  if (order.status === "paid" && finalOutcome !== "paid") {
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  try {
+    if (finalOutcome === "paid") {
+      await ctx.runMutation(internal.paymentOrders.fulfillPaid, {
+        providerOrderId,
+        eventType,
+        providerPaymentId,
+        providerStatus,
+        providerUnmappedStatus,
+      });
+    } else if (finalOutcome === "payment_pending") {
+      await ctx.runMutation(internal.paymentOrders.markPaymentPending, {
+        orderId: order._id,
+        eventType,
+        providerPaymentId,
+        providerStatus,
+        providerUnmappedStatus,
+        reason: failureReason,
+      });
+    } else {
+      await ctx.runMutation(internal.paymentOrders.markFailed, {
+        orderId: order._id,
+        reason: failureReason,
+        eventType,
+        status: finalOutcome,
+        providerPaymentId,
+        providerStatus,
+        providerUnmappedStatus,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`PayU settlement failed for ${providerOrderId}: ${msg}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId, { paymentError: "fulfillment" }),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  return Response.redirect(
+    buildAppPaymentReturnUrl(providerOrderId),
+    PAYU_RETURN_REDIRECT_STATUS,
+  );
+}
+
+/**
+ * GET-only fallback: no signed form, but we have a txnid. Settle using
+ * verify_payment (same as admin reconcile) so a browser GET to surl still
+ * unlocks when the server POST is missing or blocked.
+ */
+async function settlePayuFromVerifyApiOnly(
+  ctx: HttpActionCtx,
+  providerOrderId: string,
+): Promise<Response> {
+  const order = await ctx.runQuery(
+    internal.paymentOrders.getByProviderOrderId,
+    { providerOrderId },
+  );
+  if (!order) {
+    console.warn(`PayU GET: unknown txnid=${providerOrderId}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  if (order.status === "paid" && order.entitlementId) {
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  let verified: PayuVerifyResult;
+  try {
+    verified = await verifyPayuPayment(providerOrderId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`PayU verify_payment (GET) failed for ${providerOrderId}: ${message}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  if (verified.outcome === null) {
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  const eventType = "PAYU_GET_VERIFY";
+  const failureReason =
+    verified.failureReason ?? "PayU could not confirm this payment yet.";
+
+  try {
+    if (verified.outcome === "paid") {
+      await ctx.runMutation(internal.paymentOrders.fulfillPaid, {
+        providerOrderId,
+        eventType,
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
+      });
+    } else if (verified.outcome === "payment_pending") {
+      await ctx.runMutation(internal.paymentOrders.markPaymentPending, {
+        orderId: order._id,
+        eventType,
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
+        reason: failureReason,
+      });
+    } else {
+      await ctx.runMutation(internal.paymentOrders.markFailed, {
+        orderId: order._id,
+        reason: failureReason,
+        eventType,
+        status: verified.outcome,
+        providerPaymentId: verified.providerPaymentId,
+        providerStatus: verified.providerStatus,
+        providerUnmappedStatus: verified.providerUnmappedStatus,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`PayU GET settlement failed for ${providerOrderId}: ${msg}`);
+    return Response.redirect(
+      buildAppPaymentReturnUrl(providerOrderId, { paymentError: "fulfillment" }),
+      PAYU_RETURN_REDIRECT_STATUS,
+    );
+  }
+
+  return Response.redirect(
+    buildAppPaymentReturnUrl(providerOrderId),
+    PAYU_RETURN_REDIRECT_STATUS,
+  );
+}
+
+http.route({
+  path: "/payu/return",
+  method: "GET",
+  handler: httpAction(async (ctx, req) => {
+    const url = new URL(req.url);
+    const queryStr = url.search.length > 1 ? url.search.slice(1) : "";
+    if (queryStr) {
+      const fromQuery = parsePayuFormPayload(queryStr);
+      if (fromQuery.hash?.trim() && fromQuery.txnid?.trim()) {
+        return settlePayuFormBody(ctx, queryStr, "PAYU_GET_FORM");
+      }
+    }
+    const providerOrderId =
+      url.searchParams.get("orderId")?.trim() ||
+      url.searchParams.get("order_id")?.trim() ||
+      url.searchParams.get("txnid")?.trim() ||
+      url.searchParams.get("Txnid")?.trim();
+    if (!providerOrderId) {
+      return Response.redirect(
+        buildAppPaymentReturnUrl(undefined, { paymentError: "missing_txnid" }),
+        PAYU_RETURN_REDIRECT_STATUS,
+      );
+    }
+    return settlePayuFromVerifyApiOnly(ctx, providerOrderId);
+  }),
+});
+
+/**
+ * PayU Hosted Checkout callback endpoint. PayU POSTs URL-encoded form
+ * fields here after the customer completes, fails, or cancels the
+ * hosted checkout flow. We verify the reverse hash, then settle the
+ * local order server-side before redirecting the browser back into the
+ * app.
+ */
+http.route({
+  path: "/payu/return",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const rawBody = await req.text();
+    return settlePayuFormBody(ctx, rawBody, "PAYU_CALLBACK");
+  }),
+});
 
 export default http;

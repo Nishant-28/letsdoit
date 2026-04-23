@@ -90,6 +90,33 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+/** PayU `firstname` — full display name when possible; sensible fallback from email. */
+function buildPayuFirstname(user: {
+  name?: string | null;
+  email?: string | null;
+}): string {
+  const fullName = (user.name ?? "")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (fullName) {
+    return sanitizePayuField(fullName, "Customer", 60);
+  }
+  const email = (user.email ?? "").trim();
+  const at = email.indexOf("@");
+  if (at > 0) {
+    const local = email
+      .slice(0, at)
+      .replace(/[.+_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (local) {
+      return sanitizePayuField(local, "Customer", 60);
+    }
+  }
+  return "Customer";
+}
+
 async function verifyPayuPayment(providerOrderId: string) {
   const config = getPayuConfig();
   const command = "verify_payment";
@@ -245,7 +272,7 @@ export const createOrder = action({
       txnid: providerOrderId,
       amount: formatPayuAmount(amountPaise),
       productinfo: sanitizePayuField(productInfo, "payment", 80),
-      firstname: sanitizePayuField(user.name?.split(/\s+/)[0], "Customer", 60),
+      firstname: buildPayuFirstname(user),
       email: sanitizePayuField(user.email, "customer@example.com", 100),
       phone,
       surl: payuReturnUrl,
@@ -359,6 +386,8 @@ export const adminReconcileOrder = action({
         providerUnmappedStatus: verified.providerUnmappedStatus,
       });
       actionTaken = `marked_${verified.outcome}`;
+    } else if (verified.outcome === null) {
+      actionTaken = "verify_inconclusive";
     }
 
     return {

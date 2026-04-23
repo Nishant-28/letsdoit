@@ -13,21 +13,31 @@ const MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+/** In dev, Tailwind CSS is built to `/frontend.css` — it must be linked for every full-page load, not just `/`, or deep links/refresh (e.g. `/jobs/…`) have no styles. */
+async function loadIndexHtmlForPage(): Promise<string> {
+  const indexPath = join(import.meta.dir, "index.html");
+  let html = await file(indexPath).text();
+  
+  // Rewrite relative paths to absolute so nested routes (e.g. /jobs/123) resolve correctly
+  html = html.replace(/\.\/frontend\.tsx/g, "/frontend.tsx");
+  html = html.replace(/\.\/logo\.svg/g, "/logo.svg");
+
+  if (process.env.NODE_ENV !== "production") {
+    html = html.replace(
+      "</head>",
+      '  <link rel="stylesheet" href="/frontend.css" />\n</head>',
+    );
+  }
+  return html;
+}
+
 async function serveStatic(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const pathname = url.pathname;
 
   // Serve index.html for root
   if (pathname === "/") {
-    const indexPath = join(import.meta.dir, "index.html");
-    let html = await file(indexPath).text();
-    // Dev server serves CSS at /frontend.css; omit from HTML so `bun run build` can bundle CSS.
-    if (process.env.NODE_ENV !== "production") {
-      html = html.replace(
-        "</head>",
-        '  <link rel="stylesheet" href="/frontend.css" />\n</head>'
-      );
-    }
+    const html = await loadIndexHtmlForPage();
     return new Response(html, {
       headers: { "Content-Type": "text/html" },
     });
@@ -57,9 +67,8 @@ async function serveStatic(req: Request): Promise<Response> {
 
   // For all other routes (SPA client-side routing), serve index.html
   try {
-    const indexPath = join(import.meta.dir, "index.html");
-    const fd = await file(indexPath).text();
-    return new Response(fd, {
+    const html = await loadIndexHtmlForPage();
+    return new Response(html, {
       headers: { "Content-Type": "text/html" },
     });
   } catch {

@@ -46,15 +46,20 @@ unlocks:
 3. PayU POSTs the customer back to `CONVEX_SITE_URL/payu/return`.
 4. `convex/http.ts` reverse-verifies the PayU hash, then settles the
    order server-side and redirects the browser to
-   `/payment/return?orderId=<txnid>`.
+   `PUBLIC_APP_URL/payment/return?orderId=<txnid>`.
 5. `src/routes/PaymentReturn.tsx` watches the order status reactively.
+
+**Do not** set `PUBLIC_APP_URL` to `*.convex.site` — that is only for
+`CONVEX_SITE_URL` (PayU server-to-server callbacks). `PUBLIC_APP_URL`
+must be the real web app origin (e.g. `http://localhost:3000` or your
+production domain) so the browser returns to the SPA after checkout.
 
 Required Convex env vars:
 
 - `PAYU_KEY`
 - `PAYU_SALT`
 - `PAYU_ENV` (`test` or `production`)
-- `PUBLIC_APP_URL`
+- `PUBLIC_APP_URL` (your React app, **not** the Convex site URL)
 - `CONVEX_SITE_URL`
 - `PAYU_CALLBACK_URL` (optional override)
 - `PAYU_VERIFY_URL` (optional override)

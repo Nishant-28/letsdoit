@@ -1,10 +1,41 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/posthog";
+
+const PAYMENT_ERROR_MESSAGES: Record<string, string> = {
+  missing_hash:
+    "PayU did not send a payment signature. Try again or contact support if this persists.",
+  invalid_hash:
+    "We could not verify the payment response with PayU. If money was debited, open billing history or contact support with your order id.",
+  fulfillment:
+    "Payment may have succeeded but we could not unlock your purchase automatically. Check billing history or contact support.",
+  missing_txnid:
+    "PayU returned without an order reference. Open billing history to confirm whether you were charged.",
+};
+
+function paymentErrorMessage(code: string | null): string | null {
+  if (!code) return null;
+  return PAYMENT_ERROR_MESSAGES[code] ?? `Something went wrong (${code}).`;
+}
+
+function CheckoutErrorBanner({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="mb-5 rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-left text-sm text-on-surface"
+    >
+      <p className="font-headline font-semibold text-error mb-1">
+        Payment handoff issue
+      </p>
+      <p className="font-body text-on-surface-variant">{message}</p>
+    </div>
+  );
+}
 
 /**
  * Post-checkout landing page. The PayU callback flow redirects here with
@@ -20,27 +51,15 @@ import { trackEvent } from "@/lib/posthog";
 export function PaymentReturn() {
   const [params] = useSearchParams();
   const providerOrderId = params.get("orderId") ?? params.get("order_id") ?? "";
+  const paymentErrorCode = params.get("paymentError");
+  const paymentErrorText = paymentErrorMessage(paymentErrorCode);
   const navigate = useNavigate();
+  const checkoutTracked = useRef<string | null>(null);
 
   const order = useQuery(
     api.paymentOrders.myOrder,
     providerOrderId ? { providerOrderId } : "skip",
   );
-
-  useEffect(() => {
-    if (!order) return;
-    if (order.status === "paid") {
-      trackEvent("checkout_succeeded", {
-        provider_order_id: providerOrderId,
-        product_type: order.productType,
-      });
-    } else if (order.status === "failed" || order.status === "canceled") {
-      trackEvent("checkout_failed", {
-        provider_order_id: providerOrderId,
-        status: order.status,
-      });
-    }
-  }, [order, providerOrderId]);
 
   const heroNextRoute = useMemo(() => {
     if (!order) return "/app";
@@ -50,16 +69,45 @@ export function PaymentReturn() {
     return "/app";
   }, [order]);
 
+  useEffect(() => {
+    if (!order) return;
+    const key = `${providerOrderId}:${order.status}`;
+    if (checkoutTracked.current === key) return;
+    if (order.status === "paid") {
+      checkoutTracked.current = key;
+      trackEvent("checkout_succeeded", {
+        provider_order_id: providerOrderId,
+        product_type: order.productType,
+      });
+    } else if (order.status === "failed" || order.status === "canceled") {
+      checkoutTracked.current = key;
+      trackEvent("checkout_failed", {
+        provider_order_id: providerOrderId,
+        status: order.status,
+      });
+    }
+  }, [order, providerOrderId]);
+
+  useEffect(() => {
+    if (!order || order.status !== "paid") return;
+    const t = window.setTimeout(() => {
+      navigate(heroNextRoute, { replace: true });
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [order, heroNextRoute, navigate]);
+
   if (!providerOrderId) {
     return (
       <CenteredPanel>
+        <CheckoutErrorBanner message={paymentErrorText} />
         <StateIcon name="help" tone="muted" />
         <h1 className="font-headline text-2xl text-primary mb-2">
-          Missing order reference
+          {paymentErrorText ? "Checkout incomplete" : "Missing order reference"}
         </h1>
         <p className="font-body text-sm text-on-surface-variant mb-6">
-          We couldn&apos;t find an order in your URL. Open your billing
-          history to review recent purchases.
+          {paymentErrorText
+            ? "Use billing history to confirm whether you were charged."
+            : "We couldn&apos;t find an order in your URL. Open your billing history to review recent purchases."}
         </p>
         <Link
           to="/billing"
@@ -75,6 +123,7 @@ export function PaymentReturn() {
   if (order === undefined) {
     return (
       <CenteredPanel>
+        <CheckoutErrorBanner message={paymentErrorText} />
         <StateIcon name="hourglass_top" tone="active" spin />
         <h1 className="font-headline text-2xl text-primary mb-2">
           Confirming your payment
@@ -89,6 +138,7 @@ export function PaymentReturn() {
   if (order === null) {
     return (
       <CenteredPanel>
+        <CheckoutErrorBanner message={paymentErrorText} />
         <StateIcon name="help" tone="muted" />
         <h1 className="font-headline text-2xl text-primary mb-2">
           Order not found
@@ -115,17 +165,20 @@ export function PaymentReturn() {
         <h1 className="font-headline text-2xl md:text-3xl text-primary mb-2">
           Payment successful
         </h1>
-        <p className="font-body text-sm text-on-surface-variant mb-6">
+        <p className="font-body text-sm text-on-surface-variant mb-2">
           {order.productType === "subscription"
             ? "Your subscription is active. Every published job is unlocked."
             : "The job has been unlocked. Apply directly from the listing."}
+        </p>
+        <p className="font-label text-xs text-outline-variant mb-6">
+          Redirecting you shortly…
         </p>
         <button
           type="button"
           onClick={() => navigate(heroNextRoute, { replace: true })}
           className="inline-flex items-center gap-2 bg-primary text-on-primary font-headline font-semibold px-5 py-2.5 rounded-lg hover:bg-primary-container transition-colors"
         >
-          Continue
+          Continue now
           <Icon name="arrow_forward" className="text-base" />
         </button>
       </CenteredPanel>
@@ -135,6 +188,7 @@ export function PaymentReturn() {
   if (order.status === "failed" || order.status === "canceled") {
     return (
       <CenteredPanel>
+        <CheckoutErrorBanner message={paymentErrorText} />
         <StateIcon name="error" tone="error" />
         <h1 className="font-headline text-2xl md:text-3xl text-primary mb-2">
           Payment {order.status === "canceled" ? "canceled" : "failed"}
@@ -188,6 +242,7 @@ export function PaymentReturn() {
 
   return (
     <CenteredPanel>
+      <CheckoutErrorBanner message={paymentErrorText} />
       <StateIcon name="hourglass_top" tone="active" spin />
       <h1 className="font-headline text-2xl text-primary mb-2">
         Waiting for confirmation

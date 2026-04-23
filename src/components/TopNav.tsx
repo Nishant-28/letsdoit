@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { Link, NavLink } from "react-router";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -21,7 +22,10 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 export function TopNav() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { isLoading: workosAuthLoading } = useAuth();
+  const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
+  /** Do not show Login/avatar until both providers have settled (avoids false "logged out" on cold open). */
+  const authResolving = workosAuthLoading || convexAuthLoading;
   const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
   const admin = canAccessAdminSurface(me);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -76,7 +80,7 @@ export function TopNav() {
           </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
-          {!isLoading && (
+          {!authResolving && (
             <>
               {isAuthenticated ? (
                 <UserMenu />
@@ -163,7 +167,7 @@ export function TopNav() {
               Admin
             </NavLink>
           ) : null}
-          {!isAuthenticated && !isLoading && (
+          {!isAuthenticated && !authResolving && (
             <Link
               to="/signup"
               className="block sm:hidden mt-2"
