@@ -53,6 +53,7 @@ export function App() {
     <AuthKitProvider
       clientId={WORKOS_CLIENT_ID}
       redirectUri={WORKOS_REDIRECT_URI}
+      devMode={process.env.NODE_ENV !== "production"}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
         <BrowserRouter>

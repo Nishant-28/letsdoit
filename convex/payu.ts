@@ -108,7 +108,21 @@ export function getPublicAppUrl(): string {
       "PUBLIC_APP_URL is not set. Set it with `bunx convex env set PUBLIC_APP_URL https://your-app.example.com`.",
     );
   }
-  return raw.replace(/\/$/, "");
+  const normalized = raw.replace(/\/$/, "");
+  let hostname: string;
+  try {
+    hostname = new URL(normalized).hostname.toLowerCase();
+  } catch {
+    throw new Error(
+      "PUBLIC_APP_URL must be a full URL (include https:// or http://), e.g. https://app.example.com",
+    );
+  }
+  if (hostname === "convex.site" || hostname.endsWith(".convex.site")) {
+    throw new Error(
+      "PUBLIC_APP_URL must be your web app origin, not *.convex.site. Set CONVEX_SITE_URL for PayU callbacks only; PUBLIC_APP_URL is where users land after checkout.",
+    );
+  }
+  return normalized;
 }
 
 export function getConvexSiteUrl(): string {
@@ -127,10 +141,48 @@ export function getPayuCallbackUrl(): string {
   return `${getConvexSiteUrl()}/payu/return`;
 }
 
-export function buildAppPaymentReturnUrl(providerOrderId: string): string {
+/**
+ * Browser redirect target after PayU callback. `providerOrderId` may be
+ * omitted when only showing an error state (e.g. missing txnid).
+ * Optional `extra` query params (e.g. `paymentError`) are merged for SPA handling.
+ */
+export function buildAppPaymentReturnUrl(
+  providerOrderId: string | undefined,
+  extra?: Record<string, string>,
+): string {
   const url = new URL(`${getPublicAppUrl()}/payment/return`);
-  url.searchParams.set("orderId", providerOrderId);
+  if (providerOrderId) {
+    url.searchParams.set("orderId", providerOrderId);
+  }
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value) url.searchParams.set(key, value);
+    }
+  }
   return url.toString();
+}
+
+/**
+ * Combine PayU `verify_payment` API outcome with the hosted-checkout POST
+ * callback outcome. Reverse-hash verification already authenticated the
+ * callback; a null verify outcome means "unknown / not indexed yet" and
+ * must not downgrade a successful callback to payment_pending.
+ */
+export function mergePayuVerifyWithCallback(
+  callbackOutcome: PayuOrderOutcome,
+  verified: { outcome: PayuOrderOutcome | null } | null,
+): PayuOrderOutcome {
+  if (!verified) return callbackOutcome;
+  const v = verified.outcome;
+  if (v === "failed" || v === "canceled") {
+    // Do not let a late / disagreeing verify API overrule a
+    // reverse-hash-authenticated "paid" response from the callback.
+    if (callbackOutcome === "paid") return "paid";
+    return v;
+  }
+  if (v === "paid") return "paid";
+  if (v === null) return callbackOutcome;
+  return callbackOutcome === "paid" ? "paid" : "payment_pending";
 }
 
 export function sanitizePayuField(
@@ -287,8 +339,11 @@ export function derivePayuOutcome(
 
   if (
     normalizedUnmapped === "captured" ||
-    normalizedUnmapped === "paid" ||
-    normalizedUnmapped === "success"
+    normalizedUnmapped === "settled" ||
+    normalizedUnmapped === "settlement" ||
+    normalizedUnmapped === "autopost" ||
+    normalizedUnmapped === "success" ||
+    normalizedUnmapped === "paid"
   ) {
     return "paid";
   }
